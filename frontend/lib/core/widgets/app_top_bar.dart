@@ -14,6 +14,7 @@ class AppTopBar extends StatelessWidget {
   final int unreadNotifications;
   final ValueChanged<String>? onGlobalSearch;
   final VoidCallback? onSyncApi;
+  final VoidCallback? onLogout;
 
   const AppTopBar({
     super.key,
@@ -23,6 +24,7 @@ class AppTopBar extends StatelessWidget {
     required this.unreadNotifications,
     this.onGlobalSearch,
     this.onSyncApi,
+    this.onLogout,
   });
 
   String _breadcrumbLabel(String path) {
@@ -42,6 +44,8 @@ class AppTopBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final isMobile = AppResponsive.isMobile(context);
     final activeService = SoaServices.forRoute(currentLocation);
+    // Flutter chỉ gọi Gateway; nhãn cho biết Gateway định tuyến tới service nào.
+    final routeLabel = 'Gateway :8000 → ${activeService.shortName} :${activeService.port}';
 
     return Container(
       height: AppSpacing.topBarHeight,
@@ -98,7 +102,7 @@ class AppTopBar extends StatelessWidget {
                       border: Border.all(color: AppColors.border),
                     ),
                     child: Text(
-                      '${activeService.shortName} · Port ${activeService.port}',
+                      routeLabel,
                       style: AppTypography.captionSm.copyWith(
                         fontFamily: 'monospace',
                         fontWeight: FontWeight.w600,
@@ -202,6 +206,8 @@ class AppTopBar extends StatelessWidget {
                 context.go('/notifications');
               } else if (value == 'sync') {
                 onSyncApi?.call();
+              } else if (value == 'logout') {
+                onLogout?.call();
               }
             },
             itemBuilder: (_) => [
@@ -244,6 +250,17 @@ class AppTopBar extends StatelessWidget {
                     Icon(Icons.settings_outlined, size: 17, color: AppColors.textSecondary),
                     SizedBox(width: 10),
                     Text('Cài đặt & Kết nối SOA', style: AppTypography.body),
+                  ],
+                ),
+              ),
+              const PopupMenuDivider(),
+              const PopupMenuItem<String>(
+                value: 'logout',
+                child: Row(
+                  children: [
+                    Icon(Icons.logout_rounded, size: 17, color: AppColors.error),
+                    SizedBox(width: 10),
+                    Text('Đăng xuất', style: AppTypography.body),
                   ],
                 ),
               ),

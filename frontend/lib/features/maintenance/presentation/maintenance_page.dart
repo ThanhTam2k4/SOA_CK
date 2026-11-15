@@ -177,12 +177,12 @@ class _MaintenancePageState extends State<MaintenancePage> {
             ),
             AppButton(
               label: existing == null ? 'Tạo yêu cầu' : 'Lưu thay đổi',
-              onPressed: () {
+              onPressed: () async {
                 if (!formKey.currentState!.validate()) return;
                 final cost = double.tryParse(costCtrl.text.trim()) ?? 0;
 
                 if (existing == null) {
-                  repo.addMaintenance(
+                  final err = await repo.addMaintenance(
                     MaintenanceItem(
                       id: DateTime.now().millisecondsSinceEpoch,
                       code: codeCtrl.text.trim(),
@@ -197,10 +197,15 @@ class _MaintenancePageState extends State<MaintenancePage> {
                       estimatedCost: cost,
                     ),
                   );
+                  if (!ctx.mounted || !mounted) return;
+                  if (err != null) {
+                    showErrorToast(context, err);
+                    return;
+                  }
                   Navigator.pop(ctx);
                   showSuccessToast(context, 'Đã tạo yêu cầu bảo trì "${codeCtrl.text.trim()}"');
                 } else {
-                  repo.updateMaintenance(
+                  final err = await repo.updateMaintenance(
                     existing.copyWith(
                       code: codeCtrl.text.trim(),
                       roomName: roomCtrl.text.trim(),
@@ -213,6 +218,11 @@ class _MaintenancePageState extends State<MaintenancePage> {
                       estimatedCost: cost,
                     ),
                   );
+                  if (!ctx.mounted || !mounted) return;
+                  if (err != null) {
+                    showErrorToast(context, err);
+                    return;
+                  }
                   Navigator.pop(ctx);
                   showSuccessToast(context, 'Đã cập nhật yêu cầu "${codeCtrl.text.trim()}"');
                 }
@@ -236,7 +246,12 @@ class _MaintenancePageState extends State<MaintenancePage> {
       message: 'Bạn có chắc chắn muốn xóa yêu cầu "${item.code}" (${item.roomName})?',
     );
     if (!confirmed || !mounted) return;
-    context.read<AppDataRepository>().deleteMaintenance(item.id);
+    final err = await context.read<AppDataRepository>().deleteMaintenance(item.id);
+    if (!mounted) return;
+    if (err != null) {
+      showErrorToast(context, err);
+      return;
+    }
     showSuccessToast(context, 'Đã xóa yêu cầu "${item.code}"');
   }
 

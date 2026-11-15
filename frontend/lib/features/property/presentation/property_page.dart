@@ -142,13 +142,13 @@ class _PropertyPageState extends State<PropertyPage> {
             ),
             AppButton(
               label: existing == null ? 'Thêm nhà trọ' : 'Lưu thay đổi',
-              onPressed: () {
+              onPressed: () async {
                 if (!formKey.currentState!.validate()) return;
                 final repo = context.read<AppDataRepository>();
                 final total = int.tryParse(totalRoomsCtrl.text.trim()) ?? 0;
 
                 if (existing == null) {
-                  repo.addProperty(
+                  final err = await repo.addProperty(
                     PropertyItem(
                       id: DateTime.now().millisecondsSinceEpoch,
                       code: codeCtrl.text.trim(),
@@ -162,10 +162,15 @@ class _PropertyPageState extends State<PropertyPage> {
                       description: descCtrl.text.trim(),
                     ),
                   );
+                  if (!ctx.mounted || !mounted) return;
+                  if (err != null) {
+                    showErrorToast(context, err);
+                    return;
+                  }
                   Navigator.pop(ctx);
                   showSuccessToast(context, 'Đã thêm nhà trọ "${nameCtrl.text.trim()}"');
                 } else {
-                  repo.updateProperty(
+                  final err = await repo.updateProperty(
                     existing.copyWith(
                       code: codeCtrl.text.trim(),
                       name: nameCtrl.text.trim(),
@@ -176,6 +181,11 @@ class _PropertyPageState extends State<PropertyPage> {
                       description: descCtrl.text.trim(),
                     ),
                   );
+                  if (!ctx.mounted || !mounted) return;
+                  if (err != null) {
+                    showErrorToast(context, err);
+                    return;
+                  }
                   Navigator.pop(ctx);
                   showSuccessToast(context, 'Đã cập nhật nhà trọ "${nameCtrl.text.trim()}"');
                 }
@@ -286,7 +296,12 @@ class _PropertyPageState extends State<PropertyPage> {
           'Bạn có chắc chắn muốn xóa nhà trọ "${item.name}" (${item.code})? Hành động này sẽ ngừng kích hoạt dữ liệu nhà trọ.',
     );
     if (!confirmed || !mounted) return;
-    context.read<AppDataRepository>().deleteProperty(item.id);
+    final err = await context.read<AppDataRepository>().deleteProperty(item.id);
+    if (!mounted) return;
+    if (err != null) {
+      showErrorToast(context, err);
+      return;
+    }
     showSuccessToast(context, 'Đã xóa nhà trọ "${item.name}"');
   }
 

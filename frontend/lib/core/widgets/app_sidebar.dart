@@ -24,11 +24,34 @@ class AppSidebar extends StatelessWidget {
   final String currentLocation;
   final int unreadNotifications;
 
+  /// Trạng thái thực tế từ GET /api/system/health/ (null = chưa kiểm tra).
+  final int? servicesUp;
+  final int? servicesTotal;
+  final bool gatewayUp;
+
   const AppSidebar({
     super.key,
     required this.currentLocation,
     this.unreadNotifications = 0,
+    this.servicesUp,
+    this.servicesTotal,
+    this.gatewayUp = false,
   });
+
+  (Color, String, String) get _soaStatus {
+    if (servicesTotal == null) {
+      return (AppColors.textMuted, 'Kiến trúc SOA', 'Chưa kiểm tra trạng thái');
+    }
+    if (!gatewayUp) {
+      return (AppColors.error, 'API Gateway DOWN', 'Không kết nối được :8000');
+    }
+    final allUp = servicesUp == servicesTotal;
+    return (
+      allUp ? AppColors.success : AppColors.warning,
+      allUp ? 'Kiến trúc SOA Active' : 'Hệ thống suy giảm',
+      'Gateway :8000 · $servicesUp/$servicesTotal service UP',
+    );
+  }
 
   List<SidebarNavItem> get _mainItems => [
         const SidebarNavItem(
@@ -87,6 +110,7 @@ class AppSidebar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final (soaColor, soaTitle, soaSubtitle) = _soaStatus;
     return Container(
       width: AppSpacing.sidebarWidth,
       decoration: const BoxDecoration(
@@ -203,8 +227,8 @@ class AppSidebar extends StatelessWidget {
                 Container(
                   width: 8,
                   height: 8,
-                  decoration: const BoxDecoration(
-                    color: AppColors.success,
+                  decoration: BoxDecoration(
+                    color: soaColor,
                     shape: BoxShape.circle,
                   ),
                 ),
@@ -214,13 +238,13 @@ class AppSidebar extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Kiến trúc SOA Active',
+                        soaTitle,
                         style: AppTypography.labelSm.copyWith(
                           color: AppColors.textPrimary,
                         ),
                       ),
-                      const Text(
-                        'Ports 8001 – 8005 sẵn sàng',
+                      Text(
+                        soaSubtitle,
                         style: AppTypography.captionSm,
                       ),
                     ],

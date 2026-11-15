@@ -11,6 +11,7 @@ import '../../../core/widgets/app_text_field.dart';
 import '../../../core/widgets/page_header.dart';
 import '../../../core/widgets/state_views.dart';
 import '../../../core/widgets/status_badge.dart';
+import '../../../models/system_health_model.dart';
 import '../../../shared/services/app_data_repository.dart';
 
 class SettingsPage extends StatefulWidget {
@@ -52,13 +53,18 @@ class _SettingsPageState extends State<SettingsPage> {
               variant: AppButtonVariant.outlined,
               onPressed: () async {
                 setState(() => _syncing = true);
-                await repo.syncWithBackend();
+                await repo.refreshSystemHealth();
                 if (context.mounted) {
                   setState(() => _syncing = false);
-                  showSuccessToast(
-                    context,
-                    'Đã kiểm tra 5 cổng dịch vụ SOA (Ports 8001–8005)',
-                  );
+                  final h = repo.systemHealth;
+                  if (h != null && h.gatewayStatus == ServiceStatus.up) {
+                    showSuccessToast(
+                      context,
+                      'API Gateway: ${h.upCount}/${h.services.length} service đang hoạt động',
+                    );
+                  } else {
+                    showErrorToast(context, 'Không kết nối được API Gateway (:8000)');
+                  }
                 }
               },
             ),
@@ -82,7 +88,7 @@ class _SettingsPageState extends State<SettingsPage> {
                     ),
                     SizedBox(height: 4),
                     Text(
-                      'Mỗi service hoạt động độc lập trên một Port và Database riêng biệt',
+                      'Mỗi service có Port & Database riêng; Frontend chỉ gọi qua API Gateway :8000',
                       style: AppTypography.caption,
                     ),
                   ],
@@ -111,9 +117,9 @@ class _SettingsPageState extends State<SettingsPage> {
                     cellBuilder: (s) => CodeBadge(':${s.port}'),
                   ),
                   AppTableColumn(
-                    label: 'ENDPOINT REST API',
+                    label: 'ENDPOINT (QUA GATEWAY)',
                     flex: 2,
-                    cellBuilder: (s) => Text(s.apiBase, style: AppTypography.code),
+                    cellBuilder: (s) => Text(s.gatewayEndpoint, style: AppTypography.code),
                   ),
                   AppTableColumn(
                     label: 'DATABASE',
@@ -124,11 +130,13 @@ class _SettingsPageState extends State<SettingsPage> {
                     label: 'TRẠNG THÁI',
                     width: 150,
                     cellBuilder: (s) {
-                      final online = repo.portStatus[s.port] ?? false;
-                      return StatusBadge(
-                        label: online ? 'Sẵn sàng' : 'Mock Mode',
-                        type: online ? BadgeType.success : BadgeType.info,
-                      );
+                      final status = repo.systemHealth?.service(s.id)?.status;
+                      return switch (status) {
+                        ServiceStatus.up => const StatusBadge(label: 'UP', type: BadgeType.success),
+                        ServiceStatus.down => const StatusBadge(label: 'DOWN', type: BadgeType.error),
+                        ServiceStatus.unknown => const StatusBadge(label: 'UNKNOWN', type: BadgeType.info),
+                        null => const StatusBadge(label: 'Chưa kiểm tra', type: BadgeType.info),
+                      };
                     },
                   ),
                   AppTableColumn(

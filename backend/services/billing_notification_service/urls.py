@@ -1,7 +1,12 @@
-from django.urls import path
-from .views import BillingServiceStatusView
+from django.urls import include, path
+from rest_framework.routers import DefaultRouter
+
+from .views import InvoiceViewSet, NotificationViewSet
+
+router = DefaultRouter()
+router.register(r'billing/invoices', InvoiceViewSet, basename='invoice')
+router.register(r'notifications', NotificationViewSet, basename='notification')
 
 urlpatterns = [
-    path('status/', BillingServiceStatusView.as_view(), name='billing_service_status'),
+    path('', include(router.urls)),
 ]
-

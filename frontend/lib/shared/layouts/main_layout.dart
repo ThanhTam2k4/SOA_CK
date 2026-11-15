@@ -7,6 +7,8 @@ import '../../core/utils/responsive.dart';
 import '../../core/widgets/app_sidebar.dart';
 import '../../core/widgets/app_top_bar.dart';
 import '../../core/widgets/state_views.dart';
+import '../../models/system_health_model.dart';
+import '../../providers/auth_provider.dart';
 import '../services/app_data_repository.dart';
 
 class MainLayout extends StatelessWidget {
@@ -22,12 +24,23 @@ class MainLayout extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final repo = context.watch<AppDataRepository>();
+    final auth = context.watch<AuthProvider>();
+    if (auth.status == AuthStatus.unknown) {
+      return const Scaffold(
+        backgroundColor: AppColors.background,
+        body: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+      );
+    }
     final isDesktop = AppResponsive.isDesktop(context);
     final isMobile = AppResponsive.isMobile(context);
 
+    final health = repo.systemHealth;
     final sidebar = AppSidebar(
       currentLocation: currentLocation,
       unreadNotifications: repo.unreadNotificationCount,
+      servicesUp: health?.upCount,
+      servicesTotal: health?.services.length,
+      gatewayUp: health?.gatewayStatus == ServiceStatus.up,
     );
 
     return Scaffold(
@@ -45,8 +58,8 @@ class MainLayout extends StatelessWidget {
               children: [
                 AppTopBar(
                   currentLocation: currentLocation,
-                  userName: repo.currentUserName,
-                  userRole: repo.currentUserRole,
+                  userName: auth.displayName,
+                  userRole: auth.roleDisplay,
                   unreadNotifications: repo.unreadNotificationCount,
                   onGlobalSearch: (query) {
                     context.go('/rooms');
@@ -54,14 +67,17 @@ class MainLayout extends StatelessWidget {
                   onSyncApi: () async {
                     await repo.syncWithBackend();
                     if (context.mounted) {
-                      showSuccessToast(
-                        context,
-                        repo.isBackendConnected
-                            ? 'Đã đồng bộ dữ liệu trực tiếp từ Django SOA (Ports 8001–8005)'
-                            : 'Đang sử dụng dữ liệu mẫu (Mock Data chuẩn SOA)',
-                      );
+                      if (repo.isBackendConnected) {
+                        showSuccessToast(context, 'Đã đồng bộ dữ liệu qua API Gateway (:8000)');
+                      } else {
+                        showErrorToast(
+                          context,
+                          'Không kết nối được API Gateway — đang hiển thị dữ liệu mẫu. ${repo.lastSyncError ?? ''}',
+                        );
+                      }
                     }
                   },
+                  onLogout: () => context.read<AuthProvider>().logout(),
                 ),
                 Expanded(
                   child: SingleChildScrollView(

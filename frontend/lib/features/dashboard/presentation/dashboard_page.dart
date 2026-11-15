@@ -13,6 +13,7 @@ import '../../../core/widgets/stat_card.dart';
 import '../../../core/widgets/status_badge.dart';
 import '../../../shared/models/app_models.dart';
 import '../../../shared/services/app_data_repository.dart';
+import '../widgets/soa_architecture_card.dart';
 import 'widgets/monthly_revenue_chart.dart';
 import 'widgets/room_ratio_chart.dart';
 
@@ -24,14 +25,23 @@ class DashboardPage extends StatelessWidget {
     final repo = context.watch<AppDataRepository>();
     final width = MediaQuery.sizeOf(context).width;
     final cols = AppResponsive.statGridCrossAxisCount(width);
-    final occupancyRate = repo.totalRoomsCount > 0
-        ? ((repo.occupiedRoomsCount / repo.totalRoomsCount) * 100).round()
-        : 0;
+
+    // Đã kết nối Gateway: số liệu THẬT từ GET /api/dashboard/summary/.
+    // Trường null (service sở hữu đang DOWN) hiển thị "—", không bịa số.
+    // Chưa kết nối: số liệu tính từ dữ liệu mẫu.
+    final s = repo.isBackendConnected ? repo.dashboardSummary : null;
+    final live = s != null;
+    String n(int? liveValue, int mockValue) => live ? (liveValue?.toString() ?? '—') : '$mockValue';
+
+    final occupancyText = live
+        ? (s.occupancyRatePercent != null ? '${s.occupancyRatePercent!.round()}%' : '—')
+        : '${repo.totalRoomsCount > 0 ? ((repo.occupiedRoomsCount / repo.totalRoomsCount) * 100).round() : 0}%';
+    final unpaid = live ? (s.unpaidInvoices ?? 0) : repo.unpaidInvoicesCount;
 
     final stats = [
       StatCard(
         title: 'Tổng số tòa nhà',
-        value: '${repo.totalPropertiesCount}',
+        value: n(s?.totalProperties, repo.totalPropertiesCount),
         subtitle: 'Cơ sở đang vận hành',
         icon: Icons.apartment_rounded,
         tone: StatIconTone.primary,
@@ -39,15 +49,15 @@ class DashboardPage extends StatelessWidget {
       ),
       StatCard(
         title: 'Tổng số phòng',
-        value: '${repo.totalRoomsCount}',
-        subtitle: 'Tỷ lệ lấp đầy $occupancyRate%',
+        value: n(s?.totalRooms, repo.totalRoomsCount),
+        subtitle: 'Tỷ lệ lấp đầy $occupancyText',
         icon: Icons.door_front_door_outlined,
         tone: StatIconTone.primary,
         onTap: () => context.go('/rooms'),
       ),
       StatCard(
         title: 'Phòng đang thuê',
-        value: '${repo.occupiedRoomsCount}',
+        value: n(s?.occupiedRooms, repo.occupiedRoomsCount),
         subtitle: 'Đang khai thác ổn định',
         icon: Icons.people_outline_rounded,
         tone: StatIconTone.primary,
@@ -55,7 +65,7 @@ class DashboardPage extends StatelessWidget {
       ),
       StatCard(
         title: 'Phòng còn trống',
-        value: '${repo.availableRoomsCount}',
+        value: n(s?.availableRooms, repo.availableRoomsCount),
         subtitle: 'Sẵn sàng đón khách',
         icon: Icons.check_circle_outline_rounded,
         tone: StatIconTone.success,
@@ -63,18 +73,22 @@ class DashboardPage extends StatelessWidget {
       ),
       StatCard(
         title: 'Hợp đồng hiệu lực',
-        value: '${repo.activeContractsCount}',
-        subtitle: 'Đang hoạt động',
+        value: n(s?.activeContracts, repo.activeContractsCount),
+        subtitle: live && (s.expiringSoonContracts ?? 0) > 0
+            ? '${s.expiringSoonContracts} sắp hết hạn'
+            : 'Đang hoạt động',
         icon: Icons.description_outlined,
         tone: StatIconTone.primary,
         onTap: () => context.go('/contract'),
       ),
       StatCard(
         title: 'Hóa đơn cần thu',
-        value: '${repo.unpaidInvoicesCount}',
-        subtitle: 'Chờ thanh toán / quá hạn',
+        value: n(s?.unpaidInvoices, repo.unpaidInvoicesCount),
+        subtitle: live && s.unpaidAmount != null
+            ? 'Còn nợ ${AppFormatters.currency(s.unpaidAmount)}'
+            : 'Chờ thanh toán / quá hạn',
         icon: Icons.receipt_long_outlined,
-        tone: repo.unpaidInvoicesCount > 0
+        tone: unpaid > 0
             ? StatIconTone.warning
             : StatIconTone.neutral,
         onTap: () => context.go('/billing'),
@@ -103,6 +117,20 @@ class DashboardPage extends StatelessWidget {
           ],
         ),
 
+        if (!repo.isBackendConnected)
+          _DataSourceBanner(
+            message: 'Chưa kết nối được API Gateway — đang hiển thị DỮ LIỆU MẪU. '
+                '${repo.lastSyncError ?? ''}',
+            isError: true,
+          )
+        else if (repo.dashboardError != null)
+          _DataSourceBanner(message: 'Không lấy được số liệu tổng quan: ${repo.dashboardError}', isError: true)
+        else if (live && !s.complete)
+          _DataSourceBanner(
+            message: 'Thiếu số liệu do service không phản hồi: ${s.failedSources.join(', ')}',
+            isError: false,
+          ),
+
         // KPI Statistics Grid
         GridView.builder(
           shrinkWrap: true,
@@ -124,9 +152,9 @@ class DashboardPage extends StatelessWidget {
           builder: (context, constraints) {
             final isWide = constraints.maxWidth >= 900;
             final ratioChart = RoomRatioChart(
-              occupied: repo.occupiedRoomsCount,
-              available: repo.availableRoomsCount,
-              maintenance: repo.maintenanceRoomsCount,
+              occupied: live ? (s.occupiedRooms ?? 0) : repo.occupiedRoomsCount,
+              available: live ? (s.availableRooms ?? 0) : repo.availableRoomsCount,
+              maintenance: live ? (s.maintenanceRooms ?? 0) : repo.maintenanceRoomsCount,
             );
             final revenueChart = MonthlyRevenueChart(points: repo.revenuePoints);
 
@@ -148,6 +176,15 @@ class DashboardPage extends StatelessWidget {
               ],
             );
           },
+        ),
+
+        const SizedBox(height: AppSpacing.xxl),
+
+        // Trạng thái THỰC TẾ của kiến trúc SOA (Gateway kiểm tra /health/ của 5 service)
+        SoaArchitectureCard(
+          health: repo.systemHealth,
+          isLoading: repo.isSyncing,
+          onRefresh: repo.refreshSystemHealth,
         ),
 
         const SizedBox(height: AppSpacing.xxl),
@@ -427,6 +464,33 @@ class _PropertyOccupancyRow extends StatelessWidget {
             );
           },
         ),
+      ),
+    );
+  }
+}
+
+
+/// Băng thông báo nguồn dữ liệu của Dashboard (dữ liệu mẫu / thiếu số liệu).
+class _DataSourceBanner extends StatelessWidget {
+  final String message;
+  final bool isError;
+
+  const _DataSourceBanner({required this.message, required this.isError});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: AppSpacing.lg),
+      padding: const EdgeInsets.all(AppSpacing.md),
+      decoration: BoxDecoration(
+        color: isError ? AppColors.errorLight : AppColors.warningLight,
+        borderRadius: BorderRadius.circular(AppSpacing.inputRadius),
+        border: Border.all(color: isError ? AppColors.errorBorder : AppColors.warningBorder),
+      ),
+      child: Text(
+        message.trim(),
+        style: AppTypography.caption.copyWith(color: isError ? AppColors.errorText : AppColors.warningText),
       ),
     );
   }

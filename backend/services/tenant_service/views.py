@@ -1,25 +1,75 @@
-from rest_framework.views import APIView
+from django.db.models import Q
+from rest_framework import permissions, viewsets
+from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework import permissions
 
-class TenantServiceStatusView(APIView):
-    """
-    SERVICE 3 — TENANT SERVICE:
-    Thông báo trạng thái hoàn thành trong Sprint tiếp theo (Sprint 2)
-    """
-    permission_classes = [permissions.AllowAny]
+from common.auth import IsManagerRole, get_user_id, is_admin_or_staff, is_landlord
+from .models import TenantProfile, TenantStatus
+from .serializers import RentalHistorySerializer, TenantProfileSerializer
 
-    def get(self, request):
+
+def scoped_tenants(user):
+    """
+    - ADMIN / STAFF : toàn bộ
+    - LANDLORD      : người thuê do mình quản lý (landlord_id)
+    - TENANT        : chỉ hồ sơ gắn với tài khoản của mình (user_id)
+    """
+    queryset = TenantProfile.objects.all()
+    if is_admin_or_staff(user):
+        return queryset
+    if is_landlord(user):
+        return queryset.filter(landlord_id=get_user_id(user))
+    return queryset.filter(user_id=get_user_id(user))
+
+
+class TenantProfileViewSet(viewsets.ModelViewSet):
+    """
+    SERVICE 3 — TENANT SERVICE
+    - CRUD hồ sơ người thuê (quản lý: ADMIN/STAFF/LANDLORD; TENANT chỉ xem hồ sơ của mình)
+    - Lọc: ?search= (tên/SĐT/CCCD), ?status=, ?room_id=
+    - GET/POST /{id}/history/  lịch sử thuê
+    - GET /summary/            thống kê (Dashboard qua Gateway)
+    """
+    serializer_class = TenantProfileSerializer
+
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve', 'summary') or (
+                self.action == 'history' and self.request.method == 'GET'):
+            return [permissions.IsAuthenticated()]
+        return [permissions.IsAuthenticated(), IsManagerRole()]
+
+    def get_queryset(self):
+        queryset = scoped_tenants(self.request.user)
+        params = self.request.query_params
+        search = params.get('search')
+        if search:
+            queryset = queryset.filter(
+                Q(full_name__icontains=search) | Q(phone_number__icontains=search) |
+                Q(identity_card__icontains=search))
+        if params.get('status') and params['status'] != 'ALL':
+            queryset = queryset.filter(status=params['status'])
+        if params.get('room_id'):
+            queryset = queryset.filter(room_id=params['room_id'])
+        return queryset
+
+    def perform_create(self, serializer):
+        serializer.save(landlord_id=get_user_id(self.request.user))
+
+    @action(detail=True, methods=['get', 'post'])
+    def history(self, request, pk=None):
+        tenant = self.get_object()
+        if request.method == 'GET':
+            return Response(RentalHistorySerializer(tenant.rental_history.all(), many=True).data)
+        serializer = RentalHistorySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save(tenant=tenant)
+        return Response(serializer.data, status=201)
+
+    @action(detail=False, methods=['get'])
+    def summary(self, request):
+        queryset = scoped_tenants(request.user)
         return Response({
-            'service_name': 'SERVICE 3 — TENANT SERVICE (QUẢN LÝ NGƯỜI THUÊ)',
-            'status': 'PLANNED_SPRINT_2',
-            'sprint': 'Sprint 2 — Tenant & Contract Management',
-            'message': 'Dịch vụ này được lên lịch hoàn thành trong Sprint 2 tiếp theo.',
-            'database': 'nhatro_tenant_db',
-            'planned_features': [
-                'Hồ sơ định danh khách thuê (CCCD/CMND, quê quán, nghề nghiệp)',
-                'Quản lý khai báo đăng ký tạm trú',
-                'Lịch sử cư trú và chuyển đổi phòng',
-                'Quản lý danh sách thành viên cùng phòng',
-            ]
+            'total_tenants': queryset.count(),
+            'active_tenants': queryset.filter(status=TenantStatus.ACTIVE).count(),
+            'moved_out_tenants': queryset.filter(status=TenantStatus.MOVED_OUT).count(),
         })

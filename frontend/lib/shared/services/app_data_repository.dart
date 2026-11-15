@@ -1,22 +1,31 @@
 import 'package:flutter/foundation.dart';
-import '../../core/constants/soa_services.dart';
+
+import '../../core/constants/api_constants.dart';
+import '../../models/dashboard_summary_model.dart';
+import '../../models/system_health_model.dart';
 import '../models/app_models.dart';
 import 'api_client.dart';
 
-/// Repository quản lý dữ liệu theo Clean Architecture:
-/// - Khởi tạo sẵn Mock Data thực tế, đầy đủ cho tất cả 8 phân hệ
-/// - Tự động kiểm tra và đồng bộ dữ liệu thực từ Django REST API (Ports 8001–8005) khi khả dụng
+/// Repository dữ liệu của ứng dụng (Clean Architecture).
+///
+/// - MỌI request đi qua API Gateway (:8000). Flutter không gọi trực tiếp 5 service (8001–8005);
+///   việc định tuyến, kiểm tra health và tổng hợp số liệu Dashboard do Gateway đảm nhiệm.
+/// - Khi đã đăng nhập và Gateway phản hồi: Nhà trọ / Phòng / Bảo trì là dữ liệu THẬT
+///   (kể cả khi danh sách rỗng), Dashboard lấy từ /api/dashboard/summary/,
+///   trạng thái SOA lấy từ /api/system/health/.
+/// - Khi chưa kết nối được Gateway: hiển thị dữ liệu mẫu (Mock Data) để demo giao diện,
+///   cờ [isBackendConnected] = false.
 class AppDataRepository extends ChangeNotifier {
-  String currentUserName = 'Nguyễn Văn Chủ Trọ';
-  String currentUserRole = 'Quản lý hệ thống (Landlord)';
   bool isBackendConnected = false;
-  final Map<int, bool> portStatus = {
-    8001: true,
-    8002: true,
-    8003: true,
-    8004: true,
-    8005: true,
-  };
+  bool isSyncing = false;
+  String? lastSyncError;
+
+  /// Trạng thái thực tế Gateway + 5 service (null = chưa kiểm tra).
+  SystemHealth? systemHealth;
+
+  /// Số liệu Dashboard do Gateway tổng hợp (null = chưa có / Gateway lỗi).
+  DashboardSummary? dashboardSummary;
+  String? dashboardError;
 
   late List<PropertyItem> _properties;
   late List<RoomItem> _rooms;
@@ -29,7 +38,6 @@ class AppDataRepository extends ChangeNotifier {
 
   AppDataRepository() {
     _seedMockData();
-    syncWithBackend();
   }
 
   List<PropertyItem> get properties => List.unmodifiable(_properties);
@@ -41,7 +49,12 @@ class AppDataRepository extends ChangeNotifier {
   List<NotificationItem> get notifications => List.unmodifiable(_notifications);
   List<MonthlyRevenuePoint> get revenuePoints => List.unmodifiable(_revenuePoints);
 
-  // Dashboard computed statistics
+  /// Trạng thái từng service theo port (dùng cho trang Cài đặt). Không có dữ liệu -> false.
+  Map<int, bool> get portStatus => {
+        for (final s in systemHealth?.services ?? const <ServiceHealth>[]) s.port: s.status == ServiceStatus.up,
+      };
+
+  // Dashboard computed statistics (dữ liệu cục bộ; Dashboard ưu tiên [dashboardSummary])
   int get totalPropertiesCount => _properties.length;
   int get totalRoomsCount => _rooms.length;
   int get occupiedRoomsCount =>
@@ -540,124 +553,254 @@ class AppDataRepository extends ChangeNotifier {
     ];
   }
 
-  /// Đồng bộ với Django SOA Backend (Ports 8001–8005) nếu các service đang chạy.
-  Future<void> syncWithBackend() async {
+  // =====================================================================
+  // GATEWAY: HEALTH & DASHBOARD (từ nhánh origin/baodev)
+  // =====================================================================
+
+  /// Trạng thái thực tế của Gateway + 5 service.
+  /// Không ném lỗi: nếu Gateway không phản hồi thì Gateway = DOWN, các service = UNKNOWN.
+  Future<SystemHealth> fetchSystemHealth() async {
     try {
-      for (final svc in SoaServices.all) {
-        final ok = await SoaApiClient.checkPortHealth(svc);
-        portStatus[svc.port] = ok;
+      final res = await ApiClient.get(ApiConstants.systemHealth, requireAuth: false);
+      if (res is Map<String, dynamic>) {
+        return SystemHealth.fromJson(res);
       }
-
-      if (portStatus[8002] == true) {
-        final rawProps = await SoaApiClient.getJson(SoaServices.property, '/properties/');
-        final rawRooms = await SoaApiClient.getJson(SoaServices.property, '/rooms/');
-        final rawMaint = await SoaApiClient.getJson(SoaServices.property, '/maintenance/');
-
-        if (rawProps is List && rawProps.isNotEmpty) {
-          _properties = rawProps.map((p) {
-            return PropertyItem(
-              id: p['id'] as int,
-              code: '${p['code'] ?? 'NT-${p['id']}'}',
-              name: '${p['name'] ?? ''}',
-              address: '${p['full_address'] ?? p['address'] ?? ''}',
-              district: '${p['district'] ?? ''}',
-              ward: '${p['ward'] ?? ''}',
-              totalRooms: (p['total_rooms_count'] as num?)?.toInt() ?? 0,
-              occupiedRooms: ((p['occupied_rooms_count'] as num?)?.toInt() ?? 0) +
-                  ((p['full_rooms_count'] as num?)?.toInt() ?? 0),
-              availableRooms: (p['available_rooms_count'] as num?)?.toInt() ?? 0,
-              maintenanceRooms: (p['maintenance_rooms_count'] as num?)?.toInt() ?? 0,
-              status: '${p['status'] ?? 'ACTIVE'}',
-              description: '${p['description'] ?? ''}',
-            );
-          }).toList();
-        }
-
-        if (rawRooms is List && rawRooms.isNotEmpty) {
-          _rooms = rawRooms.map((r) {
-            final st = '${r['status'] ?? 'AVAILABLE'}';
-            return RoomItem(
-              id: r['id'] as int,
-              code: '${r['code'] ?? ''}',
-              name: 'Phòng ${r['room_number'] ?? ''}',
-              propertyId: (r['property'] as num?)?.toInt() ?? 1,
-              propertyName: '${r['property_name'] ?? ''}',
-              floor: (r['floor'] as num?)?.toInt() ?? 1,
-              rentPrice: double.tryParse('${r['rent_price'] ?? 0}') ?? 0,
-              area: double.tryParse('${r['area'] ?? 20}') ?? 20,
-              currentOccupants: (r['current_occupants'] as num?)?.toInt() ?? 0,
-              maxOccupants: (r['max_occupants'] as num?)?.toInt() ?? 2,
-              status: st == 'FULL' ? 'OCCUPIED' : st,
-              description: '${r['description'] ?? ''}',
-            );
-          }).toList();
-        }
-
-        if (rawMaint is List && rawMaint.isNotEmpty) {
-          _maintenances = rawMaint.map((m) {
-            return MaintenanceItem(
-              id: m['id'] as int,
-              code: '${m['code'] ?? ''}',
-              roomId: (m['room'] as num?)?.toInt() ?? 0,
-              roomName: 'Phòng ${m['room_number'] ?? ''}',
-              propertyName: '${m['property_name'] ?? ''}',
-              title: '${m['title'] ?? ''}',
-              description: '${m['description'] ?? ''}',
-              createdAt: '${m['requested_date'] ?? ''}',
-              priority: '${m['priority'] ?? 'MEDIUM'}',
-              status: '${m['status'] ?? 'PENDING'}',
-              estimatedCost: double.tryParse('${m['estimated_cost'] ?? 0}') ?? 0,
-              actualCost: double.tryParse('${m['actual_cost'] ?? 0}') ?? 0,
-            );
-          }).toList();
-        }
-        isBackendConnected = true;
-      } else {
-        isBackendConnected = false;
-      }
-    } catch (_) {
-      isBackendConnected = false;
+      return SystemHealth.gatewayUnreachable('Phản hồi không hợp lệ từ API Gateway.');
+    } catch (e) {
+      return SystemHealth.gatewayUnreachable(e.toString());
     }
+  }
+
+  /// Số liệu Dashboard tổng hợp (theo phạm vi quyền của user đang đăng nhập).
+  /// Ném [ApiException] khi Gateway lỗi hoặc token hết hạn.
+  Future<DashboardSummary> fetchDashboardSummary() async {
+    final res = await ApiClient.get(ApiConstants.dashboardSummary);
+    if (res is Map<String, dynamic>) {
+      return DashboardSummary.fromJson(res);
+    }
+    throw ApiException('Phản hồi không hợp lệ từ API Gateway.');
+  }
+
+  /// Chỉ kiểm tra trạng thái hệ thống (không cần đăng nhập).
+  Future<void> refreshSystemHealth() async {
+    systemHealth = await fetchSystemHealth();
     notifyListeners();
+  }
+
+  /// Đồng bộ dữ liệu thật qua API Gateway (cần đã đăng nhập).
+  Future<void> syncWithBackend() async {
+    if (isSyncing) return;
+    isSyncing = true;
+    lastSyncError = null;
+    notifyListeners();
+
+    try {
+      systemHealth = await fetchSystemHealth();
+      if (systemHealth!.gatewayStatus != ServiceStatus.up) {
+        isBackendConnected = false;
+        lastSyncError = systemHealth!.error ?? 'API Gateway không phản hồi.';
+        return;
+      }
+
+      try {
+        dashboardSummary = await fetchDashboardSummary();
+        dashboardError = null;
+      } on ApiException catch (e) {
+        dashboardSummary = null;
+        dashboardError = e.message;
+      }
+
+      final rawProps = await ApiClient.get(ApiConstants.properties);
+      final rawRooms = await ApiClient.get(ApiConstants.rooms);
+      final rawMaint = await ApiClient.get(ApiConstants.maintenance);
+
+      // Đã kết nối: thay toàn bộ dữ liệu mẫu bằng dữ liệu thật (kể cả khi rỗng).
+      _properties = rawProps is List
+          ? rawProps.whereType<Map<String, dynamic>>().map(_propertyFromJson).toList()
+          : <PropertyItem>[];
+      _rooms = rawRooms is List
+          ? rawRooms.whereType<Map<String, dynamic>>().map(_roomFromJson).toList()
+          : <RoomItem>[];
+      _maintenances = rawMaint is List
+          ? rawMaint.whereType<Map<String, dynamic>>().map(_maintenanceFromJson).toList()
+          : <MaintenanceItem>[];
+      isBackendConnected = true;
+    } on ApiException catch (e) {
+      isBackendConnected = false;
+      lastSyncError = e.message;
+    } catch (e) {
+      isBackendConnected = false;
+      lastSyncError = e.toString();
+    } finally {
+      isSyncing = false;
+      notifyListeners();
+    }
+  }
+
+  /// Gọi khi đăng xuất: bỏ dữ liệu thật của phiên trước, quay về dữ liệu mẫu.
+  void resetAfterLogout() {
+    isBackendConnected = false;
+    dashboardSummary = null;
+    dashboardError = null;
+    lastSyncError = null;
+    _seedMockData();
+    notifyListeners();
+  }
+
+  // ---------------- JSON MAPPING ----------------
+  static int _int(dynamic v, [int fallback = 0]) =>
+      v is num ? v.toInt() : int.tryParse('${v ?? ''}') ?? fallback;
+  static double _double(dynamic v, [double fallback = 0]) =>
+      v is num ? v.toDouble() : double.tryParse('${v ?? ''}') ?? fallback;
+
+  static PropertyItem _propertyFromJson(Map<String, dynamic> p) => PropertyItem(
+        id: _int(p['id']),
+        code: '${p['code'] ?? 'NT-${p['id']}'}',
+        name: '${p['name'] ?? ''}',
+        address: '${p['full_address'] ?? p['address'] ?? ''}',
+        district: '${p['district'] ?? ''}',
+        ward: '${p['ward'] ?? ''}',
+        totalRooms: _int(p['total_rooms_count']),
+        occupiedRooms: _int(p['occupied_rooms_count']),
+        availableRooms: _int(p['available_rooms_count']),
+        maintenanceRooms: _int(p['maintenance_rooms_count']),
+        status: '${p['status'] ?? 'ACTIVE'}',
+        description: '${p['description'] ?? ''}',
+      );
+
+  static RoomItem _roomFromJson(Map<String, dynamic> r) {
+    final st = '${r['status'] ?? 'AVAILABLE'}';
+    return RoomItem(
+      id: _int(r['id']),
+      code: '${r['code'] ?? ''}',
+      name: '${r['room_number'] ?? ''}',
+      propertyId: _int(r['property']),
+      propertyName: '${r['property_name'] ?? ''}',
+      floor: _int(r['floor'], 1),
+      rentPrice: _double(r['rent_price']),
+      area: _double(r['area'], 20),
+      currentOccupants: _int(r['current_occupants']),
+      maxOccupants: _int(r['max_occupants'], 2),
+      // Giao diện gộp FULL (đủ người) vào "Đang thuê".
+      status: st == 'FULL' ? 'OCCUPIED' : st,
+      description: '${r['description'] ?? ''}',
+    );
+  }
+
+  static MaintenanceItem _maintenanceFromJson(Map<String, dynamic> m) => MaintenanceItem(
+        id: _int(m['id']),
+        code: '${m['code'] ?? ''}',
+        roomId: _int(m['room']),
+        roomName: '${m['room_number'] ?? ''}',
+        propertyName: '${m['property_name'] ?? ''}',
+        title: '${m['title'] ?? ''}',
+        description: '${m['description'] ?? ''}',
+        createdAt: '${m['requested_date'] ?? ''}',
+        priority: '${m['priority'] ?? 'MEDIUM'}',
+        status: '${m['status'] ?? 'PENDING'}',
+        estimatedCost: _double(m['estimated_cost']),
+        actualCost: _double(m['actual_cost']),
+      );
+
+  /// Thực hiện thao tác ghi qua Gateway rồi đồng bộ lại. Trả về null nếu thành công,
+  /// ngược lại trả về thông báo lỗi để UI hiển thị.
+  Future<String?> _remoteWrite(Future<dynamic> Function() call) async {
+    try {
+      await call();
+      await syncWithBackend();
+      return null;
+    } on ApiException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
   }
 
   // ---------------- CRUD PROPERTY ----------------
-  void addProperty(PropertyItem item) {
+  Map<String, dynamic> _propertyPayload(PropertyItem item) => {
+        'name': item.name,
+        'address': item.address,
+        'district': item.district,
+        'ward': item.ward,
+        'status': item.status,
+        'description': item.description,
+        if (item.code.isNotEmpty) 'code': item.code,
+      };
+
+  Future<String?> addProperty(PropertyItem item) async {
+    if (isBackendConnected) {
+      return _remoteWrite(() => ApiClient.post(ApiConstants.properties, _propertyPayload(item)));
+    }
     _properties = [item, ..._properties];
     notifyListeners();
+    return null;
   }
 
-  void updateProperty(PropertyItem updated) {
+  Future<String?> updateProperty(PropertyItem updated) async {
+    if (isBackendConnected) {
+      return _remoteWrite(
+          () => ApiClient.patch('${ApiConstants.properties}${updated.id}/', _propertyPayload(updated)));
+    }
     _properties = [
       for (final p in _properties) p.id == updated.id ? updated : p,
     ];
     notifyListeners();
+    return null;
   }
 
-  void deleteProperty(int id) {
+  Future<String?> deleteProperty(int id) async {
+    if (isBackendConnected) {
+      return _remoteWrite(() => ApiClient.delete('${ApiConstants.properties}$id/'));
+    }
     _properties = _properties.where((p) => p.id != id).toList();
     notifyListeners();
+    return null;
   }
 
   // ---------------- CRUD ROOM ----------------
-  void addRoom(RoomItem item) {
+  Map<String, dynamic> _roomPayload(RoomItem item) => {
+        'property': item.propertyId,
+        'room_number': item.name,
+        'floor': item.floor,
+        'rent_price': item.rentPrice,
+        'area': item.area,
+        'max_occupants': item.maxOccupants,
+        'current_occupants': item.currentOccupants,
+        'status': item.status,
+        'description': item.description,
+        if (item.code.isNotEmpty) 'code': item.code,
+      };
+
+  Future<String?> addRoom(RoomItem item) async {
+    if (isBackendConnected) {
+      return _remoteWrite(() => ApiClient.post(ApiConstants.rooms, _roomPayload(item)));
+    }
     _rooms = [item, ..._rooms];
     _recalculatePropertyCounts();
     notifyListeners();
+    return null;
   }
 
-  void updateRoom(RoomItem updated) {
+  Future<String?> updateRoom(RoomItem updated) async {
+    if (isBackendConnected) {
+      return _remoteWrite(() => ApiClient.patch('${ApiConstants.rooms}${updated.id}/', _roomPayload(updated)));
+    }
     _rooms = [
       for (final r in _rooms) r.id == updated.id ? updated : r,
     ];
     _recalculatePropertyCounts();
     notifyListeners();
+    return null;
   }
 
-  void deleteRoom(int id) {
+  Future<String?> deleteRoom(int id) async {
+    if (isBackendConnected) {
+      return _remoteWrite(() => ApiClient.delete('${ApiConstants.rooms}$id/'));
+    }
     _rooms = _rooms.where((r) => r.id != id).toList();
     _recalculatePropertyCounts();
     notifyListeners();
+    return null;
   }
 
   void _recalculatePropertyCounts() {
@@ -728,21 +871,68 @@ class AppDataRepository extends ChangeNotifier {
   }
 
   // ---------------- CRUD MAINTENANCE ----------------
-  void addMaintenance(MaintenanceItem item) {
-    _maintenances = [item, ..._maintenances];
-    notifyListeners();
+  /// Form bảo trì nhập tên phòng dạng chữ -> tìm id phòng thật (theo tên/mã, có thể kèm tên nhà trọ).
+  int? _resolveRoomId(MaintenanceItem item) {
+    if (item.roomId > 0) return item.roomId;
+    final name = item.roomName.trim().toLowerCase();
+    final prop = item.propertyName.trim().toLowerCase();
+    final matches = _rooms.where((r) =>
+        r.name.toLowerCase() == name || r.code.toLowerCase() == name || 'phòng ${r.name}'.toLowerCase() == name);
+    final narrowed = prop.isEmpty ? matches : matches.where((r) => r.propertyName.toLowerCase() == prop);
+    final list = narrowed.isNotEmpty ? narrowed.toList() : matches.toList();
+    return list.length == 1 ? list.first.id : null;
   }
 
-  void updateMaintenance(MaintenanceItem updated) {
+  Future<String?> addMaintenance(MaintenanceItem item) async {
+    if (isBackendConnected) {
+      final roomId = _resolveRoomId(item);
+      if (roomId == null) {
+        return 'Không xác định được phòng "${item.roomName}". Nhập đúng tên hoặc mã phòng (kèm tên nhà trọ nếu trùng).';
+      }
+      return _remoteWrite(() => ApiClient.post(ApiConstants.maintenance, {
+            'room': roomId,
+            'title': item.title,
+            'description': item.description,
+            'priority': item.priority,
+            'estimated_cost': item.estimatedCost,
+          }));
+    }
+    _maintenances = [item, ..._maintenances];
+    notifyListeners();
+    return null;
+  }
+
+  Future<String?> updateMaintenance(MaintenanceItem updated) async {
+    if (isBackendConnected) {
+      final current = _maintenances.where((m) => m.id == updated.id).firstOrNull;
+      return _remoteWrite(() async {
+        await ApiClient.patch('${ApiConstants.maintenance}${updated.id}/', {
+          'title': updated.title,
+          'description': updated.description,
+          'priority': updated.priority,
+          'estimated_cost': updated.estimatedCost,
+          'actual_cost': updated.actualCost,
+        });
+        // Trạng thái bảo trì chỉ đổi qua action để backend đồng bộ trạng thái phòng + lịch sử.
+        if (current != null && current.status != updated.status && updated.status != 'PENDING') {
+          await ApiClient.post('${ApiConstants.maintenance}${updated.id}/update_status/', {'status': updated.status});
+        }
+      });
+    }
     _maintenances = [
       for (final m in _maintenances) m.id == updated.id ? updated : m,
     ];
     notifyListeners();
+    return null;
   }
 
-  void deleteMaintenance(int id) {
+  Future<String?> deleteMaintenance(int id) async {
+    if (isBackendConnected) {
+      return _remoteWrite(() => ApiClient.delete('${ApiConstants.maintenance}$id/'));
+    }
     _maintenances = _maintenances.where((m) => m.id != id).toList();
     notifyListeners();
+    return null;
   }
 
   // ---------------- NOTIFICATIONS ----------------

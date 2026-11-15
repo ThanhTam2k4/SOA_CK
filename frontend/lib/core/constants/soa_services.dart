@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
 
+import 'api_constants.dart';
+
 /// Định nghĩa 5 Microservices trong kiến trúc SOA (mỗi service chạy trên 1 port riêng).
+/// Port/database chỉ để HIỂN THỊ kiến trúc; Frontend luôn gọi qua API Gateway
+/// ([ApiConstants.baseUrl]) — không bao giờ gọi trực tiếp port 8001–8005.
 class SoaServiceConfig {
   final String id;
   final String name;
@@ -8,6 +12,7 @@ class SoaServiceConfig {
   final int port;
   final String database;
   final String route;
+  final String gatewayPrefix;
   final IconData icon;
 
   const SoaServiceConfig({
@@ -17,12 +22,12 @@ class SoaServiceConfig {
     required this.port,
     required this.database,
     required this.route,
+    required this.gatewayPrefix,
     required this.icon,
   });
 
-  String get baseUrl => 'http://127.0.0.1:$port';
-  String get apiBase => '$baseUrl/api/v1';
-  String get healthUrl => '$baseUrl/health/?format=json';
+  /// Đường dẫn REST qua Gateway, ví dụ http://127.0.0.1:8000/api/properties/
+  String get gatewayEndpoint => '${ApiConstants.baseUrl}/$gatewayPrefix/';
 }
 
 class SoaServices {
@@ -35,6 +40,7 @@ class SoaServices {
     port: 8001,
     database: 'nhatro_identity_db',
     route: '/settings',
+    gatewayPrefix: 'auth',
     icon: Icons.verified_user_outlined,
   );
 
@@ -45,6 +51,7 @@ class SoaServices {
     port: 8002,
     database: 'nhatro_property_db',
     route: '/property',
+    gatewayPrefix: 'properties',
     icon: Icons.apartment_outlined,
   );
 
@@ -55,6 +62,7 @@ class SoaServices {
     port: 8003,
     database: 'nhatro_tenant_db',
     route: '/tenant',
+    gatewayPrefix: 'tenants',
     icon: Icons.people_outline_rounded,
   );
 
@@ -65,6 +73,7 @@ class SoaServices {
     port: 8004,
     database: 'nhatro_contract_db',
     route: '/contract',
+    gatewayPrefix: 'contracts',
     icon: Icons.description_outlined,
   );
 
@@ -75,6 +84,7 @@ class SoaServices {
     port: 8005,
     database: 'nhatro_billing_db',
     route: '/billing',
+    gatewayPrefix: 'billing/invoices',
     icon: Icons.receipt_long_outlined,
   );
 

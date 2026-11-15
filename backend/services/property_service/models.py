@@ -114,8 +114,13 @@ class RoomStatus(models.TextChoices):
     AVAILABLE = 'AVAILABLE', 'Phòng trống'
     OCCUPIED = 'OCCUPIED', 'Đang được thuê'
     FULL = 'FULL', 'Đã đủ số người'
+    RESERVED = 'RESERVED', 'Đã đặt cọc'
     MAINTENANCE = 'MAINTENANCE', 'Đang bảo trì'
     INACTIVE = 'INACTIVE', 'Ngừng hoạt động'
+
+
+# Các trạng thái được tính là "đang có khách thuê".
+RENTED_STATUSES = (RoomStatus.OCCUPIED, RoomStatus.FULL)
 
 
 class Room(models.Model):
@@ -125,8 +130,9 @@ class Room(models.Model):
     1. AVAILABLE   — Phòng trống (có thể cho thuê)
     2. OCCUPIED    — Đang được thuê
     3. FULL        — Đã đủ số người tối đa
-    4. MAINTENANCE — Đang bảo trì / sửa chữa
-    5. INACTIVE    — Ngừng hoạt động (Soft delete / tạm ngưng)
+    4. RESERVED    — Đã đặt cọc giữ phòng
+    5. MAINTENANCE — Đang bảo trì / sửa chữa
+    6. INACTIVE    — Ngừng hoạt động (Soft delete / tạm ngưng)
     """
     code = models.CharField(max_length=40, unique=True, blank=True, verbose_name='Mã phòng')
     property = models.ForeignKey(
@@ -162,6 +168,10 @@ class Room(models.Model):
     amenities = models.CharField(max_length=500, blank=True, default='', verbose_name='Tiện ích phòng')
     description = models.TextField(blank=True, default='', verbose_name='Mô tả chi tiết')
 
+    # Chỉ số công tơ ban đầu (Billing Service dùng làm chỉ số cũ cho hóa đơn đầu tiên).
+    initial_electric_reading = models.FloatField(default=0.0, verbose_name='Chỉ số điện ban đầu')
+    initial_water_reading = models.FloatField(default=0.0, verbose_name='Chỉ số nước ban đầu')
+
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='Ngày tạo')
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -188,6 +198,8 @@ class Room(models.Model):
             return False, f'Phòng đang được thuê ({self.current_occupants}/{self.max_occupants} người, còn {remaining} chỗ trống).'
         if self.status == RoomStatus.FULL:
             return False, f'Phòng đã đủ số người tối đa ({self.max_occupants}/{self.max_occupants} người).'
+        if self.status == RoomStatus.RESERVED:
+            return False, 'Phòng đã được đặt cọc giữ chỗ.'
         if self.status == RoomStatus.MAINTENANCE:
             return False, 'Phòng đang trong quá trình bảo trì / sửa chữa, không thể sử dụng.'
         if self.status == RoomStatus.INACTIVE:
@@ -266,9 +278,16 @@ class MaintenanceRequest(models.Model):
     )
 
     reported_by = models.CharField(max_length=150, blank=True, default='Chủ trọ / Quản lý', verbose_name='Người báo cáo')
+    # ID tài khoản người báo (Identity Service) — dùng để phân quyền, không phải FK chéo service.
+    reported_by_id = models.IntegerField(null=True, blank=True, db_index=True,
+                                         verbose_name='ID Người báo (Identity Service)')
     technician_name = models.CharField(max_length=150, blank=True, default='', verbose_name='Thợ / Đơn vị sửa chữa')
+    # Trạng thái phòng trước khi khóa để bảo trì (khôi phục khi hoàn thành/hủy).
+    previous_room_status = models.CharField(max_length=20, choices=RoomStatus.choices, blank=True, null=True,
+                                            verbose_name='Trạng thái phòng trước bảo trì')
 
     requested_date = models.DateField(default=timezone.localdate, verbose_name='Ngày yêu cầu')
+    started_at = models.DateTimeField(null=True, blank=True, verbose_name='Thời điểm bắt đầu xử lý')
     completed_date = models.DateField(null=True, blank=True, verbose_name='Ngày hoàn thành')
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -278,6 +297,10 @@ class MaintenanceRequest(models.Model):
         verbose_name = 'Yêu cầu bảo trì'
         verbose_name_plural = 'Danh sách Yêu cầu bảo trì'
         ordering = ['-created_at']
+
+    @builtins.property
+    def is_open(self):
+        return self.status in (MaintenanceStatus.PENDING, MaintenanceStatus.IN_PROGRESS)
 
     def save(self, *args, **kwargs):
         if not self.code:

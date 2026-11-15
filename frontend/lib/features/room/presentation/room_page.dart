@@ -194,7 +194,7 @@ class _RoomPageState extends State<RoomPage> {
             ),
             AppButton(
               label: existing == null ? 'Thêm phòng' : 'Lưu thay đổi',
-              onPressed: () {
+              onPressed: () async {
                 if (!formKey.currentState!.validate()) return;
                 final prop = repo.properties.firstWhere((p) => p.id == propertyId);
                 final price = double.tryParse(priceCtrl.text.trim()) ?? 0;
@@ -203,7 +203,7 @@ class _RoomPageState extends State<RoomPage> {
                 final max = int.tryParse(maxOccCtrl.text.trim()) ?? 2;
 
                 if (existing == null) {
-                  repo.addRoom(
+                  final err = await repo.addRoom(
                     RoomItem(
                       id: DateTime.now().millisecondsSinceEpoch,
                       code: codeCtrl.text.trim(),
@@ -218,10 +218,15 @@ class _RoomPageState extends State<RoomPage> {
                       description: descCtrl.text.trim(),
                     ),
                   );
+                  if (!ctx.mounted || !mounted) return;
+                  if (err != null) {
+                    showErrorToast(context, err);
+                    return;
+                  }
                   Navigator.pop(ctx);
                   showSuccessToast(context, 'Đã thêm "${nameCtrl.text.trim()}"');
                 } else {
-                  repo.updateRoom(
+                  final err = await repo.updateRoom(
                     existing.copyWith(
                       code: codeCtrl.text.trim(),
                       name: nameCtrl.text.trim(),
@@ -235,6 +240,11 @@ class _RoomPageState extends State<RoomPage> {
                       description: descCtrl.text.trim(),
                     ),
                   );
+                  if (!ctx.mounted || !mounted) return;
+                  if (err != null) {
+                    showErrorToast(context, err);
+                    return;
+                  }
                   Navigator.pop(ctx);
                   showSuccessToast(context, 'Đã cập nhật "${nameCtrl.text.trim()}"');
                 }
@@ -253,7 +263,12 @@ class _RoomPageState extends State<RoomPage> {
       message: 'Bạn có chắc chắn muốn xóa ${room.name} (${room.code}) khỏi ${room.propertyName}?',
     );
     if (!confirmed || !mounted) return;
-    context.read<AppDataRepository>().deleteRoom(room.id);
+    final err = await context.read<AppDataRepository>().deleteRoom(room.id);
+    if (!mounted) return;
+    if (err != null) {
+      showErrorToast(context, err);
+      return;
+    }
     showSuccessToast(context, 'Đã xóa ${room.name}');
   }
 
