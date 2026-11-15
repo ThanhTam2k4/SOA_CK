@@ -34,7 +34,9 @@ class CurrentUserView(generics.RetrieveUpdateAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_object(self):
-        return self.request.user
+        if isinstance(self.request.user, User):
+            return self.request.user
+        return User.objects.get(pk=self.request.user.id)
 
 class UserViewSet(viewsets.ModelViewSet):
     """
@@ -56,4 +58,21 @@ class UserViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(role=UserRole.TENANT) | User.objects.filter(id=user.id)
 
         return queryset
+
+
+class TestAccountsView(generics.GenericAPIView):
+    """
+    SPRINT 1: Cung cấp danh sách tài khoản mẫu để kiểm thử đăng nhập nhanh (Test Login)
+    """
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        return Response({
+            'message': 'Danh sách tài khoản kiểm thử hệ thống SOA',
+            'test_accounts': [
+                {'username': 'chutro1', 'password': 'chutropassword123', 'role': 'LANDLORD', 'name': 'Chủ trọ Nguyễn Văn An'},
+                {'username': 'admin', 'password': 'adminpassword123', 'role': 'ADMIN', 'name': 'Quản trị viên Hệ thống'},
+                {'username': 'khach1', 'password': 'khachpassword123', 'role': 'TENANT', 'name': 'Khách thuê Trần Thị Mai'},
+            ]
+        })
 

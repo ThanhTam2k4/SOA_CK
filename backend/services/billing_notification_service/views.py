@@ -7,7 +7,7 @@ class BillingServiceStatusView(APIView):
     SERVICE 5 — BILLING & NOTIFICATION SERVICE:
     Thông báo trạng thái hoàn thành trong Sprint tiếp theo (Sprint 3)
     """
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.AllowAny]
 
     def get(self, request):
         return Response({

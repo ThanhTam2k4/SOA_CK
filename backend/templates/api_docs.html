@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>API Docs & Kiểm Tra Hoạt Động Microservices SOA — Port 8000</title>
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --card: #ffffff;
+      --border: #e2e8f0;
+      --text: #0f172a;
+      --muted: #64748b;
+      --primary: #2563eb;
+      --green: #16a34a;
+      --red: #dc2626;
+      --amber: #d97706;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; }
+    .topbar {
+      background: #0f172a; color: #fff; padding: 14px 28px;
+      display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;
+      position: sticky; top: 0; z-index: 50;
+    }
+    .brand { display: flex; align-items: center; gap: 10px; font-weight: 900; font-size: 16px; color: #fff; text-decoration: none; }
+    .top-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: 9px;
+      font-size: 13px; font-weight: 700; text-decoration: none; cursor: pointer; border: 1px solid transparent; transition: .15s;
+    }
+    .btn-primary { background: var(--primary); color: #fff; }
+    .btn-primary:hover { background: #1d4ed8; }
+    .btn-success { background: var(--green); color: #fff; }
+    .btn-outline { background: #1e293b; color: #e2e8f0; border-color: #334155; }
+    .btn-outline:hover { background: #334155; color: #fff; }
+    .btn-light { background: #fff; color: var(--text); border-color: var(--border); }
+    .btn-light:hover { background: #f1f5f9; }
+    .container { max-width: 1360px; margin: 24px auto; padding: 0 24px 48px; }
+    .section-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
+    .section-title { font-size: 20px; font-weight: 900; }
+    .section-sub { font-size: 13.5px; color: var(--muted); }
+    .health-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; margin-bottom: 28px; }
+    .svc-card {
+      background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 18px;
+      box-shadow: 0 2px 6px rgba(15, 23, 42, .03); display: flex; flex-direction: column; justify-content: space-between; gap: 12px;
+    }
+    .svc-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+    .svc-port { font-family: monospace; font-size: 12.5px; font-weight: 800; padding: 3px 9px; border-radius: 6px; background: #eff6ff; color: #1d4ed8; }
+    .status-pill { font-size: 12px; font-weight: 800; padding: 4px 10px; border-radius: 999px; display: inline-flex; align-items: center; gap: 5px; }
+    .status-online { background: #dcfce7; color: #15803d; }
+    .status-offline { background: #fee2e2; color: #b91c1c; }
+    .status-checking { background: #fef3c7; color: #b45309; }
+    .svc-name { font-size: 15px; font-weight: 800; margin-top: 6px; }
+    .svc-desc { font-size: 12.5px; color: var(--muted); }
+    .svc-meta { background: #f8fafc; border-radius: 9px; padding: 10px 12px; font-size: 12px; display: grid; gap: 4px; border: 1px solid #f1f5f9; }
+    .svc-meta div { display: flex; justify-content: space-between; gap: 8px; }
+    .svc-links { display: flex; gap: 8px; flex-wrap: wrap; }
+    .main-grid { display: grid; grid-template-columns: 1.25fr 1fr; gap: 22px; align-items: start; }
+    @media (max-width: 1024px) { .main-grid { grid-template-columns: 1fr; } }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 20px; }
+    .service-group { margin-bottom: 22px; }
+    .service-group:last-child { margin-bottom: 0; }
+    .group-header {
+      display: flex; align-items: center; justify-content: space-between; padding: 10px 14px;
+      background: #f8fafc; border: 1px solid var(--border); border-radius: 10px; margin-bottom: 10px;
+    }
+    .group-title { font-weight: 800; font-size: 14px; }
+    .ep-item {
+      display: flex; align-items: center; justify-content: space-between; gap: 10px;
+      padding: 10px 12px; border: 1px solid #f1f5f9; border-radius: 9px; margin-bottom: 6px; cursor: pointer; transition: .12s;
+    }
+    .ep-item:hover { background: #f8fafc; border-color: #cbd5e1; }
+    .method-badge {
+      font-family: monospace; font-size: 11px; font-weight: 900; padding: 3px 8px; border-radius: 5px; min-width: 58px; text-align: center;
+    }
+    .m-GET { background: #dbeafe; color: #1d4ed8; }
+    .m-POST { background: #dcfce7; color: #15803d; }
+    .m-PATCH { background: #fef3c7; color: #b45309; }
+    .m-DELETE { background: #fee2e2; color: #b91c1c; }
+    .ep-path { font-family: monospace; font-size: 12.5px; font-weight: 700; color: #0f172a; }
+    .ep-desc { font-size: 12px; color: var(--muted); }
+    .tester-sticky { position: sticky; top: 76px; }
+    .form-group { margin-bottom: 12px; }
+    .form-label { display: block; font-size: 12px; font-weight: 800; color: #334155; margin-bottom: 5px; text-transform: uppercase; }
+    .input, .select, .textarea {
+      width: 100%; padding: 9px 12px; border: 1px solid #cbd5e1; border-radius: 9px; font-size: 13px; font-family: inherit;
+    }
+    .textarea { font-family: Consolas, monospace; min-height: 110px; }
+    pre.response-box {
+      background: #0f172a; color: #e2e8f0; padding: 14px; border-radius: 10px; font-size: 12px;
+      overflow: auto; max-height: 420px; font-family: Consolas, monospace; line-height: 1.45;
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <a href="/" class="brand">📡 TRANG API DOCS & KIỂM TRA MICROSERVICES SOA</a>
+    <div class="top-actions">
+      <a href="/" class="btn btn-primary">🏠 Về Giao Diện Quản Lý Chính (Port 8000)</a>
+      <a href="/api/docs/" target="_blank" class="btn btn-outline">📘 Swagger OpenAPI UI</a>
+      <a href="/api/redoc/" target="_blank" class="btn btn-outline">📕 ReDoc</a>
+      <button onclick="checkAllServices()" class="btn btn-success">🔄 Kiểm Tra Lại Tất Cả Services</button>
+    </div>
+  </header>
+
+  <div class="container">
+    <!-- 1. LIVE SERVICE HEALTH CHECK -->
+    <div class="section-header">
+      <div>
+        <div class="section-title">1. Trạng Thái Hoạt Động Thực Tế Của Các Microservices (Port 8000 → 8005)</div>
+        <div class="section-sub">Tự động ping trực tiếp từng cổng Port và kiểm tra kết nối 5 Database SQL Server độc lập</div>
+      </div>
+      <div id="overallSummary" style="font-weight:800;font-size:14px;color:var(--primary)">Đang kiểm tra...</div>
+    </div>
+
+    <div class="health-grid" id="healthGrid"></div>
+
+    <!-- 2. INTERACTIVE API DOCS & TESTER -->
+    <div class="main-grid">
+      <div class="card">
+        <div class="section-header" style="margin-bottom:14px">
+          <div>
+            <div class="section-title" style="font-size:17px">2. Danh Mục Tài Liệu API Theo Từng Service</div>
+            <div class="section-sub">Nhấn vào bất kỳ API nào bên dưới để nạp vào khung Kiểm thử trực tiếp bên phải</div>
+          </div>
+        </div>
+        <div id="endpointsCatalog"></div>
+      </div>
+
+      <div class="card tester-sticky">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+          <div style="font-size:16px;font-weight:900">⚡ Khung Kiểm Thử API Trực Tiếp (Live Tester)</div>
+          <button onclick="quickLoginForTester()" class="btn btn-light" style="font-size:12px;padding:5px 10px">🔑 Lấy JWT Token (chutro1)</button>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">JWT Access Token (Tự động đính kèm Header Authorization: Bearer)</label>
+          <input id="testerToken" class="input" placeholder="Nhấn 'Lấy JWT Token' hoặc đăng nhập ở trang chính..." />
+        </div>
+
+        <div style="display:grid;grid-template-columns:120px 1fr;gap:8px" class="form-group">
+          <div>
+            <label class="form-label">Method</label>
+            <select id="testerMethod" class="select">
+              <option value="GET">GET</option>
+              <option value="POST">POST</option>
+              <option value="PATCH">PATCH</option>
+              <option value="DELETE">DELETE</option>
+            </select>
+          </div>
+          <div>
+            <label class="form-label">Request URL</label>
+            <input id="testerUrl" class="input" value="http://127.0.0.1:8002/api/v1/rooms/" />
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Request Body (JSON — dùng cho POST / PATCH)</label>
+          <textarea id="testerBody" class="textarea" placeholder='{"status": "AVAILABLE"}'></textarea>
+        </div>
+
+        <div style="display:flex;gap:10px;align-items:center;margin-bottom:14px">
+          <button onclick="sendTestRequest()" class="btn btn-primary" style="width:100%;justify-content:center;padding:10px">🚀 Gửi Yêu Cầu (Send Request)</button>
+        </div>
+
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <span class="form-label" style="margin:0">Kết Quả Phản Hồi (Response)</span>
+          <span id="testerStatusBadge" style="font-size:12px;font-weight:800;color:var(--muted)">Chưa gửi</span>
+        </div>
+        <pre class="response-box" id="testerResponse">// Nhấn vào 1 API bên trái hoặc bấm "Gửi Yêu Cầu" để xem kết quả JSON thực tế.</pre>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const SERVICES = [
+      {
+        name: 'API Gateway & Giao Diện Web',
+        port: 8000,
+        db: 'Router 5 Databases',
+        sprint: 'Gateway & UI',
+        healthUrl: 'http://127.0.0.1:8000/api/v1/architecture/status/?ping_ports=false',
+        rootUrl: 'http://127.0.0.1:8000/',
+        portalUrl: 'http://127.0.0.1:8000/',
+        desc: 'Cổng giao diện tổng hợp gọi tất cả các Microservices và kiểm tra kiến trúc SOA.'
+      },
+      {
+        name: 'Service 1: Identity & Auth',
+        port: 8001,
+        db: 'nhatro_identity_db',
+        sprint: 'Sprint 1 (Active)',
+        healthUrl: 'http://127.0.0.1:8001/health/?format=json',
+        rootUrl: 'http://127.0.0.1:8001/',
+        portalUrl: 'http://127.0.0.1:8000/identity/',
+        desc: 'Đăng nhập, cấp phát JWT Stateless Token và phân quyền RBAC.'
+      },
+      {
+        name: 'Service 2: Property & Maintenance',
+        port: 8002,
+        db: 'nhatro_property_db',
+        sprint: 'Sprint 1 (Active)',
+        healthUrl: 'http://127.0.0.1:8002/health/?format=json',
+        rootUrl: 'http://127.0.0.1:8002/',
+        portalUrl: 'http://127.0.0.1:8000/property/',
+        desc: 'Quản lý Nhà trọ, Phòng trọ, Trạng thái phòng, Tìm kiếm/Lọc/Sắp xếp & Bảo trì.'
+      },
+      {
+        name: 'Service 3: Tenant Service',
+        port: 8003,
+        db: 'nhatro_tenant_db',
+        sprint: 'Sprint 2',
+        healthUrl: 'http://127.0.0.1:8003/health/?format=json',
+        rootUrl: 'http://127.0.0.1:8003/',
+        portalUrl: 'http://127.0.0.1:8000/tenant/',
+        desc: 'Quản lý hồ sơ khách thuê, CCCD, đăng ký tạm trú và lịch sử cư trú.'
+      },
+      {
+        name: 'Service 4: Contract Service',
+        port: 8004,
+        db: 'nhatro_contract_db',
+        sprint: 'Sprint 2',
+        healthUrl: 'http://127.0.0.1:8004/health/?format=json',
+        rootUrl: 'http://127.0.0.1:8004/',
+        portalUrl: 'http://127.0.0.1:8000/contract/',
+        desc: 'Quản lý hợp đồng thuê trọ, gia hạn hợp đồng và thanh lý cọc.'
+      },
+      {
+        name: 'Service 5: Billing & Notification',
+        port: 8005,
+        db: 'nhatro_billing_db',
+        sprint: 'Sprint 3',
+        healthUrl: 'http://127.0.0.1:8005/health/?format=json',
+        rootUrl: 'http://127.0.0.1:8005/',
+        portalUrl: 'http://127.0.0.1:8000/billing/',
+        desc: 'Tính hóa đơn điện nước tự động, tạo mã VietQR và thông báo.'
+      }
+    ];
+
+    const API_CATALOG = [
+      {
+        group: '🔐 SERVICE 1 — IDENTITY & AUTHENTICATION (PORT 8001)',
+        port: 8001,
+        items: [
+          { method: 'POST', url: 'http://127.0.0.1:8001/api/v1/auth/login/', desc: 'Đăng nhập nhận JWT Token', body: { username: 'chutro1', password: 'chutropassword123' } },
+          { method: 'GET', url: 'http://127.0.0.1:8001/api/v1/auth/test-users/', desc: 'Danh sách tài khoản mẫu kiểm thử' },
+          { method: 'GET', url: 'http://127.0.0.1:8001/api/v1/auth/me/', desc: 'Thông tin người dùng đang đăng nhập' },
+          { method: 'GET', url: 'http://127.0.0.1:8001/api/v1/users/', desc: 'Danh sách người dùng hệ thống' },
+        ]
+      },
+      {
+        group: '🏠 SERVICE 2 — I. MODULE PROPERTY (QUẢN LÝ NHÀ TRỌ - PORT 8002)',
+        port: 8002,
+        items: [
+          { method: 'GET', url: 'http://127.0.0.1:8002/api/v1/properties/', desc: '1.2 Xem danh sách tất cả nhà trọ' },
+          { method: 'GET', url: 'http://127.0.0.1:8002/api/v1/properties/?search=Hoa Mai&status=ACTIVE', desc: '1.6 & 1.7 Tìm kiếm & Lọc nhà trọ theo tên, khu vực, trạng thái' },
+          { method: 'POST', url: 'http://127.0.0.1:8002/api/v1/properties/', desc: '1.1 Thêm nhà trọ mới', body: { code: 'NT009', name: 'Nhà trọ Minh Khôi', address: '120 Lê Văn Duyệt', ward: 'Phường 1', district: 'Bình Thạnh', city: 'TP. Hồ Chí Minh', status: 'ACTIVE', description: 'Nhà trọ mới xây' } },
+          { method: 'GET', url: 'http://127.0.0.1:8002/api/v1/properties/1/', desc: '1.3 Xem chi tiết nhà trọ kèm danh sách phòng' },
+          { method: 'PATCH', url: 'http://127.0.0.1:8002/api/v1/properties/1/', desc: '1.4 Cập nhật thông tin nhà trọ', body: { description: 'Cập nhật mô tả tiện ích mới' } },
+          { method: 'POST', url: 'http://127.0.0.1:8002/api/v1/properties/1/update_status/', desc: '1.5 Ngừng hoạt động / Khôi phục nhà trọ (ACTIVE / INACTIVE / DELETED)', body: { status: 'ACTIVE' } },
+        ]
+      },
+      {
+        group: '🚪 SERVICE 2 — II, III, IV, V, VI. MODULE ROOM (PHÒNG & TRẠNG THÁI - PORT 8002)',
+        port: 8002,
+        items: [
+          { method: 'GET', url: 'http://127.0.0.1:8002/api/v1/rooms/', desc: '2.2 Xem danh sách tất cả phòng trọ' },
+          { method: 'POST', url: 'http://127.0.0.1:8002/api/v1/rooms/', desc: '2.1 Thêm phòng trọ mới', body: { property: 1, room_number: 'Phòng A03', floor: 1, rent_price: 3500000, area: 22, max_occupants: 2, status: 'AVAILABLE', description: 'Phòng mới tầng 1' } },
+          { method: 'GET', url: 'http://127.0.0.1:8002/api/v1/rooms/1/', desc: '2.3 Xem chi tiết phòng (kèm nhà trọ & lịch sử bảo trì)' },
+          { method: 'PATCH', url: 'http://127.0.0.1:8002/api/v1/rooms/1/', desc: '2.4 Cập nhật thông tin phòng', body: { rent_price: 3900000, area: 24, max_occupants: 3 } },
+          { method: 'GET', url: 'http://127.0.0.1:8002/api/v1/rooms/1/status/', desc: '3.1 Xem trạng thái phòng' },
+          { method: 'POST', url: 'http://127.0.0.1:8002/api/v1/rooms/1/status/', desc: '3.2 Cập nhật trạng thái phòng (AVAILABLE, OCCUPIED, FULL, MAINTENANCE, INACTIVE)', body: { status: 'OCCUPIED', current_occupants: 2 } },
+          { method: 'GET', url: 'http://127.0.0.1:8002/api/v1/rooms/2/check_rentable/', desc: '3.3 Kiểm tra phòng có thể thuê hay không' },
+          { method: 'GET', url: 'http://127.0.0.1:8002/api/v1/rooms/available/', desc: '3.4 Hiển thị danh sách phòng trống (AVAILABLE)' },
+          { method: 'GET', url: 'http://127.0.0.1:8002/api/v1/rooms/occupied/', desc: '3.5 Hiển thị danh sách phòng đang thuê (OCCUPIED & FULL)' },
+          { method: 'GET', url: 'http://127.0.0.1:8002/api/v1/rooms/maintenance/', desc: '3.6 Hiển thị danh sách phòng đang bảo trì (MAINTENANCE)' },
+          { method: 'GET', url: 'http://127.0.0.1:8002/api/v1/rooms/?search=Phòng A01', desc: 'IV. Tìm kiếm phòng theo Tên phòng, Mã phòng, Nhà trọ, Khu vực' },
+          { method: 'GET', url: 'http://127.0.0.1:8002/api/v1/rooms/?min_price=2000000&max_price=4000000&min_area=15&max_area=30&sort=price_asc', desc: 'V & VI. Lọc phòng (Giá, Diện tích, Số người, Khu vực) & Sắp xếp' },
+        ]
+      },
+      {
+        group: '🛠️ SERVICE 2 — VII. MODULE MAINTENANCE (QUẢN LÝ BẢO TRÌ - PORT 8002)',
+        port: 8002,
+        items: [
+          { method: 'GET', url: 'http://127.0.0.1:8002/api/v1/maintenance/', desc: '7.2 Xem danh sách yêu cầu bảo trì' },
+          { method: 'POST', url: 'http://127.0.0.1:8002/api/v1/maintenance/', desc: '7.1 Tạo yêu cầu bảo trì mới', body: { room: 1, title: 'Phòng A01 bị hỏng điều hòa', description: 'Điều hòa không mát, cần nạp gas', estimated_cost: 500000, priority: 'HIGH' } },
+          { method: 'GET', url: 'http://127.0.0.1:8002/api/v1/maintenance/1/', desc: '7.3 Xem chi tiết yêu cầu bảo trì' },
+          { method: 'PATCH', url: 'http://127.0.0.1:8002/api/v1/maintenance/1/', desc: '7.4 Cập nhật nội dung & thông tin sửa chữa', body: { repair_info: 'Đã kiểm tra dàn lạnh và thay tụ điện' } },
+          { method: 'POST', url: 'http://127.0.0.1:8002/api/v1/maintenance/1/update_status/', desc: '7.5 Cập nhật trạng thái bảo trì (PENDING → IN_PROGRESS → COMPLETED)', body: { status: 'IN_PROGRESS', technician_name: 'Thợ Minh' } },
+          { method: 'POST', url: 'http://127.0.0.1:8002/api/v1/maintenance/1/record_cost/', desc: '7.6 Ghi nhận chi phí dự kiến & chi phí thực tế', body: { estimated_cost: 500000, actual_cost: 450000 } },
+          { method: 'POST', url: 'http://127.0.0.1:8002/api/v1/maintenance/1/complete/', desc: '7.7 Hoàn thành bảo trì & chuyển phòng sang AVAILABLE', body: { actual_cost: 450000, repair_info: 'Đã sửa xong hoàn toàn', room_status: 'AVAILABLE' } },
+          { method: 'GET', url: 'http://127.0.0.1:8002/api/v1/maintenance-history/', desc: '7.8 Xem lịch sử bảo trì toàn hệ thống' },
+        ]
+      },
+      {
+        group: '🚀 SERVICES SPRINT 2 & 3 — TENANT (8003), CONTRACT (8004), BILLING (8005)',
+        port: 8003,
+        items: [
+          { method: 'GET', url: 'http://127.0.0.1:8003/api/v1/tenants/status/', desc: 'Kiểm tra trạng thái Service 3 — Tenant Service (Port 8003)' },
+          { method: 'GET', url: 'http://127.0.0.1:8004/api/v1/contracts/status/', desc: 'Kiểm tra trạng thái Service 4 — Contract Service (Port 8004)' },
+          { method: 'GET', url: 'http://127.0.0.1:8005/api/v1/billing/status/', desc: 'Kiểm tra trạng thái Service 5 — Billing Service (Port 8005)' },
+        ]
+      }
+    ];
+
+    function initToken() {
+      const saved = localStorage.getItem('nhatro_jwt_access');
+      if (saved) document.getElementById('testerToken').value = saved;
+    }
+
+    async function checkAllServices() {
+      const grid = document.getElementById('healthGrid');
+      grid.innerHTML = SERVICES.map((s, idx) => `
+        <div class="svc-card" id="svc-card-${idx}">
+          <div>
+            <div class="svc-top">
+              <span class="svc-port">PORT :${s.port}</span>
+              <span class="status-pill status-checking" id="svc-status-${idx}">⏳ Đang kiểm tra...</span>
+            </div>
+            <div class="svc-name">${s.name}</div>
+            <div class="svc-desc">${s.desc}</div>
+          </div>
+          <div class="svc-meta">
+            <div><span style="color:#64748b">Database:</span><strong>${s.db}</strong></div>
+            <div><span style="color:#64748b">Giai đoạn:</span><strong>${s.sprint}</strong></div>
+            <div><span style="color:#64748b">Độ trễ phản hồi:</span><strong id="svc-latency-${idx}">—</strong></div>
+          </div>
+          <div class="svc-links">
+            <a href="${s.rootUrl}" target="_blank" class="btn btn-light" style="font-size:12px;padding:5px 10px">🔗 Mở Port :${s.port}</a>
+            <a href="${s.portalUrl}" class="btn btn-primary" style="font-size:12px;padding:5px 10px">⚡ Mở trên Giao diện 8000</a>
+          </div>
+        </div>
+      `).join('');
+
+      let onlineCount = 0;
+      await Promise.all(SERVICES.map(async (s, idx) => {
+        const t0 = performance.now();
+        const badge = document.getElementById(`svc-status-${idx}`);
+        const lat = document.getElementById(`svc-latency-${idx}`);
+        try {
+          const resp = await fetch(s.healthUrl, { headers: { 'Accept': 'application/json' } });
+          const ms = Math.round(performance.now() - t0);
+          if (resp.ok) {
+            onlineCount++;
+            badge.className = 'status-pill status-online';
+            badge.textContent = '● ĐANG HOẠT ĐỘNG (ONLINE)';
+            lat.textContent = `${ms} ms (HTTP ${resp.status})`;
+          } else {
+            badge.className = 'status-pill status-offline';
+            badge.textContent = `● LỖI HTTP ${resp.status}`;
+            lat.textContent = `${ms} ms`;
+          }
+        } catch (err) {
+          badge.className = 'status-pill status-offline';
+          badge.textContent = '● CHƯA KHỞI ĐỘNG (OFFLINE)';
+          lat.textContent = 'Không phản hồi (Hãy chạy run_all.py)';
+        }
+      }));
+
+      const summary = document.getElementById('overallSummary');
+      summary.textContent = `Đã kết nối ${onlineCount}/${SERVICES.length} cổng dịch vụ`;
+      summary.style.color = onlineCount === SERVICES.length ? '#16a34a' : '#d97706';
+    }
+
+    function renderCatalog() {
+      const box = document.getElementById('endpointsCatalog');
+      box.innerHTML = API_CATALOG.map(grp => `
+        <div class="service-group">
+          <div class="group-header">
+            <span class="group-title">${grp.group}</span>
+            <span class="svc-port">:${grp.port}</span>
+          </div>
+          ${grp.items.map(ep => `
+            <div class="ep-item" onclick='loadEndpoint(${JSON.stringify(ep)})'>
+              <div style="display:flex;align-items:center;gap:10px">
+                <span class="method-badge m-${ep.method}">${ep.method}</span>
+                <div>
+                  <div class="ep-path">${ep.url}</div>
+                  <div class="ep-desc">${ep.desc}</div>
+                </div>
+              </div>
+              <span style="font-size:12px;font-weight:700;color:#2563eb">Thử ngay →</span>
+            </div>
+          `).join('')}
+        </div>
+      `).join('');
+    }
+
+    function loadEndpoint(ep) {
+      document.getElementById('testerMethod').value = ep.method;
+      document.getElementById('testerUrl').value = ep.url;
+      document.getElementById('testerBody').value = ep.body ? JSON.stringify(ep.body, null, 2) : '';
+      sendTestRequest();
+    }
+
+    async function quickLoginForTester() {
+      try {
+        let resp;
+        try {
+          resp = await fetch('http://127.0.0.1:8001/api/v1/auth/login/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: 'chutro1', password: 'chutropassword123' })
+          });
+        } catch (_) {
+          resp = await fetch('/api/v1/auth/login/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: 'chutro1', password: 'chutropassword123' })
+          });
+        }
+        const data = await resp.json();
+        if (data.access) {
+          document.getElementById('testerToken').value = data.access;
+          localStorage.setItem('nhatro_jwt_access', data.access);
+          document.getElementById('testerResponse').textContent = JSON.stringify(data, null, 2);
+          document.getElementById('testerStatusBadge').textContent = '✅ Đã lấy JWT Token thành công!';
+          document.getElementById('testerStatusBadge').style.color = '#16a34a';
+        }
+      } catch (e) {
+        alert('Lỗi lấy token: ' + e.message);
+      }
+    }
+
+    async function sendTestRequest() {
+      const method = document.getElementById('testerMethod').value;
+      const url = document.getElementById('testerUrl').value.trim();
+      const token = document.getElementById('testerToken').value.trim();
+      const bodyText = document.getElementById('testerBody').value.trim();
+      const statusBadge = document.getElementById('testerStatusBadge');
+      const resBox = document.getElementById('testerResponse');
+
+      statusBadge.textContent = '⏳ Đang gửi...';
+      statusBadge.style.color = '#d97706';
+
+      const headers = { 'Accept': 'application/json', 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const options = { method, headers };
+      if (method !== 'GET' && bodyText) {
+        options.body = bodyText;
+      }
+
+      const t0 = performance.now();
+      try {
+        const resp = await fetch(url, options);
+        const ms = Math.round(performance.now() - t0);
+        const text = await resp.text();
+        let formatted = text;
+        try { formatted = JSON.stringify(JSON.parse(text), null, 2); } catch (_) {}
+        resBox.textContent = formatted;
+        statusBadge.textContent = `HTTP ${resp.status} (${ms} ms)`;
+        statusBadge.style.color = resp.ok ? '#16a34a' : '#dc2626';
+      } catch (e) {
+        resBox.textContent = `Không thể kết nối tới ${url}\nChi tiết: ${e.message}\n\nGợi ý: Hãy chắc chắn bạn đã chạy file run_all.py để bật đầy đủ các port 8000 -> 8005.`;
+        statusBadge.textContent = '❌ Lỗi kết nối';
+        statusBadge.style.color = '#dc2626';
+      }
+    }
+
+    initToken();
+    renderCatalog();
+    checkAllServices();
+  </script>
+</body>
+</html>
+

@@ -60,8 +60,17 @@ class RegisterSerializer(serializers.ModelSerializer):
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     """
-    Kèm thông tin User và Phân quyền trực tiếp trong response Login
+    Kèm thông tin User và Phân quyền trực tiếp trong JWT claims và response Login
     """
+    @classmethod
+    def get_token(cls, user):
+        token = super().get_token(user)
+        token['username'] = user.username
+        token['role'] = user.role
+        token['full_name'] = user.full_name
+        token['is_superuser'] = bool(user.is_superuser)
+        return token
+
     def validate(self, attrs):
         data = super().validate(attrs)
         user = self.user

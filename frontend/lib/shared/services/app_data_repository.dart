@@ -1,0 +1,762 @@
+import 'package:flutter/foundation.dart';
+import '../../core/constants/soa_services.dart';
+import '../models/app_models.dart';
+import 'api_client.dart';
+
+/// Repository quản lý dữ liệu theo Clean Architecture:
+/// - Khởi tạo sẵn Mock Data thực tế, đầy đủ cho tất cả 8 phân hệ
+/// - Tự động kiểm tra và đồng bộ dữ liệu thực từ Django REST API (Ports 8001–8005) khi khả dụng
+class AppDataRepository extends ChangeNotifier {
+  String currentUserName = 'Nguyễn Văn Chủ Trọ';
+  String currentUserRole = 'Quản lý hệ thống (Landlord)';
+  bool isBackendConnected = false;
+  final Map<int, bool> portStatus = {
+    8001: true,
+    8002: true,
+    8003: true,
+    8004: true,
+    8005: true,
+  };
+
+  late List<PropertyItem> _properties;
+  late List<RoomItem> _rooms;
+  late List<TenantItem> _tenants;
+  late List<ContractItem> _contracts;
+  late List<InvoiceItem> _invoices;
+  late List<MaintenanceItem> _maintenances;
+  late List<NotificationItem> _notifications;
+  late List<MonthlyRevenuePoint> _revenuePoints;
+
+  AppDataRepository() {
+    _seedMockData();
+    syncWithBackend();
+  }
+
+  List<PropertyItem> get properties => List.unmodifiable(_properties);
+  List<RoomItem> get rooms => List.unmodifiable(_rooms);
+  List<TenantItem> get tenants => List.unmodifiable(_tenants);
+  List<ContractItem> get contracts => List.unmodifiable(_contracts);
+  List<InvoiceItem> get invoices => List.unmodifiable(_invoices);
+  List<MaintenanceItem> get maintenances => List.unmodifiable(_maintenances);
+  List<NotificationItem> get notifications => List.unmodifiable(_notifications);
+  List<MonthlyRevenuePoint> get revenuePoints => List.unmodifiable(_revenuePoints);
+
+  // Dashboard computed statistics
+  int get totalPropertiesCount => _properties.length;
+  int get totalRoomsCount => _rooms.length;
+  int get occupiedRoomsCount =>
+      _rooms.where((r) => r.status == 'OCCUPIED' || r.status == 'RESERVED').length;
+  int get availableRoomsCount =>
+      _rooms.where((r) => r.status == 'AVAILABLE').length;
+  int get maintenanceRoomsCount =>
+      _rooms.where((r) => r.status == 'MAINTENANCE').length;
+  int get activeContractsCount =>
+      _contracts.where((c) => c.status == 'ACTIVE' || c.status == 'EXPIRING').length;
+  int get unpaidInvoicesCount =>
+      _invoices.where((i) => i.status == 'UNPAID' || i.status == 'OVERDUE').length;
+  int get unreadNotificationCount =>
+      _notifications.where((n) => !n.isRead).length;
+
+  void _seedMockData() {
+    _properties = [
+      const PropertyItem(
+        id: 1,
+        code: 'NT-001',
+        name: 'Khu nhà trọ Bình Thạnh Rivera',
+        address: '142 Nguyễn Gia Trí, Phường 25, Quận Bình Thạnh, TP.HCM',
+        district: 'Quận Bình Thạnh',
+        ward: 'Phường 25',
+        totalRooms: 8,
+        occupiedRooms: 5,
+        availableRooms: 2,
+        maintenanceRooms: 1,
+        status: 'ACTIVE',
+        description: 'Khu căn hộ dịch vụ mini gần ĐH HUTECH, có thang máy, khóa vân tay.',
+      ),
+      const PropertyItem(
+        id: 2,
+        code: 'NT-002',
+        name: 'Nhà trọ Sinh viên Thủ Đức Garden',
+        address: '58 Hoàng Diệu 2, Phường Linh Chiểu, TP. Thủ Đức, TP.HCM',
+        district: 'TP. Thủ Đức',
+        ward: 'Phường Linh Chiểu',
+        totalRooms: 6,
+        occupiedRooms: 4,
+        availableRooms: 2,
+        maintenanceRooms: 0,
+        status: 'ACTIVE',
+        description: 'Khu nhà trọ yên tĩnh, sân để xe rộng rãi, camera an ninh 24/7.',
+      ),
+      const PropertyItem(
+        id: 3,
+        code: 'NT-003',
+        name: 'Căn hộ Mini Quận 7 Lotus',
+        address: '215 Nguyễn Thị Thập, Phường Tân Phú, Quận 7, TP.HCM',
+        district: 'Quận 7',
+        ward: 'Phường Tân Phú',
+        totalRooms: 6,
+        occupiedRooms: 4,
+        availableRooms: 1,
+        maintenanceRooms: 1,
+        status: 'ACTIVE',
+        description: 'Gần Lotte Mart Quận 7, đầy đủ nội thất máy lạnh, tủ lạnh, máy giặt.',
+      ),
+      const PropertyItem(
+        id: 4,
+        code: 'NT-004',
+        name: 'Nhà trọ Gò Vấp Parkview',
+        address: '89 Quang Trung, Phường 10, Quận Gò Vấp, TP.HCM',
+        district: 'Quận Gò Vấp',
+        ward: 'Phường 10',
+        totalRooms: 4,
+        occupiedRooms: 2,
+        availableRooms: 2,
+        maintenanceRooms: 0,
+        status: 'INACTIVE',
+        description: 'Đang nâng cấp hệ thống phòng cháy chữa cháy định kỳ.',
+      ),
+    ];
+
+    _rooms = [
+      const RoomItem(
+        id: 101,
+        code: 'P-A101',
+        name: 'Phòng A101',
+        propertyId: 1,
+        propertyName: 'Khu nhà trọ Bình Thạnh Rivera',
+        floor: 1,
+        rentPrice: 3800000,
+        area: 24,
+        currentOccupants: 2,
+        maxOccupants: 2,
+        status: 'OCCUPIED',
+        description: 'Có ban công thoáng mát, máy lạnh Inverter, kệ bếp.',
+      ),
+      const RoomItem(
+        id: 102,
+        code: 'P-A102',
+        name: 'Phòng A102',
+        propertyId: 1,
+        propertyName: 'Khu nhà trọ Bình Thạnh Rivera',
+        floor: 1,
+        rentPrice: 3500000,
+        area: 22,
+        currentOccupants: 0,
+        maxOccupants: 2,
+        status: 'AVAILABLE',
+        description: 'Phòng mới sơn sửa, đầy đủ bình nóng lạnh, bàn làm việc.',
+      ),
+      const RoomItem(
+        id: 103,
+        code: 'P-A201',
+        name: 'Phòng A201',
+        propertyId: 1,
+        propertyName: 'Khu nhà trọ Bình Thạnh Rivera',
+        floor: 2,
+        rentPrice: 4200000,
+        area: 28,
+        currentOccupants: 2,
+        maxOccupants: 3,
+        status: 'OCCUPIED',
+        description: 'Phòng góc 2 cửa sổ, nội thất cao cấp.',
+      ),
+      const RoomItem(
+        id: 104,
+        code: 'P-A202',
+        name: 'Phòng A202',
+        propertyId: 1,
+        propertyName: 'Khu nhà trọ Bình Thạnh Rivera',
+        floor: 2,
+        rentPrice: 4000000,
+        area: 25,
+        currentOccupants: 0,
+        maxOccupants: 2,
+        status: 'MAINTENANCE',
+        description: 'Đang bảo trì hệ thống điều hòa và chống thấm ban công.',
+      ),
+      const RoomItem(
+        id: 201,
+        code: 'P-B101',
+        name: 'Phòng B101',
+        propertyId: 2,
+        propertyName: 'Nhà trọ Sinh viên Thủ Đức Garden',
+        floor: 1,
+        rentPrice: 2600000,
+        area: 18,
+        currentOccupants: 2,
+        maxOccupants: 2,
+        status: 'OCCUPIED',
+        description: 'Phòng có gác lửng, phù hợp 2 sinh viên.',
+      ),
+      const RoomItem(
+        id: 202,
+        code: 'P-B102',
+        name: 'Phòng B102',
+        propertyId: 2,
+        propertyName: 'Nhà trọ Sinh viên Thủ Đức Garden',
+        floor: 1,
+        rentPrice: 2800000,
+        area: 20,
+        currentOccupants: 0,
+        maxOccupants: 2,
+        status: 'AVAILABLE',
+        description: 'Phòng trống tầng trệt, tiện để xe.',
+      ),
+      const RoomItem(
+        id: 203,
+        code: 'P-B201',
+        name: 'Phòng B201',
+        propertyId: 2,
+        propertyName: 'Nhà trọ Sinh viên Thủ Đức Garden',
+        floor: 2,
+        rentPrice: 3000000,
+        area: 22,
+        currentOccupants: 1,
+        maxOccupants: 2,
+        status: 'RESERVED',
+        description: 'Khách đã đặt cọc giữ phòng, nhận phòng đầu tháng.',
+      ),
+      const RoomItem(
+        id: 301,
+        code: 'P-C101',
+        name: 'Phòng C101',
+        propertyId: 3,
+        propertyName: 'Căn hộ Mini Quận 7 Lotus',
+        floor: 1,
+        rentPrice: 4800000,
+        area: 30,
+        currentOccupants: 2,
+        maxOccupants: 3,
+        status: 'OCCUPIED',
+        description: 'Full nội thất: sofa, tủ lạnh, máy giặt riêng.',
+      ),
+      const RoomItem(
+        id: 302,
+        code: 'P-C102',
+        name: 'Phòng C102',
+        propertyId: 3,
+        propertyName: 'Căn hộ Mini Quận 7 Lotus',
+        floor: 1,
+        rentPrice: 4500000,
+        area: 28,
+        currentOccupants: 0,
+        maxOccupants: 2,
+        status: 'AVAILABLE',
+        description: 'Căn hộ studio cửa sổ lớn hướng Đông Nam.',
+      ),
+    ];
+
+    _tenants = [
+      const TenantItem(
+        id: 1,
+        fullName: 'Trần Minh Hoàng',
+        phone: '0908 124 567',
+        email: 'hoang.tran@gmail.com',
+        idCard: '079098001234',
+        currentRoom: 'Phòng A101',
+        propertyName: 'Khu nhà trọ Bình Thạnh Rivera',
+        startDate: '01/02/2026',
+        status: 'ACTIVE',
+      ),
+      const TenantItem(
+        id: 2,
+        fullName: 'Lê Thị Ngọc Ánh',
+        phone: '0912 345 890',
+        email: 'ngocanh.le@outlook.com',
+        idCard: '079199004512',
+        currentRoom: 'Phòng A201',
+        propertyName: 'Khu nhà trọ Bình Thạnh Rivera',
+        startDate: '15/01/2026',
+        status: 'ACTIVE',
+      ),
+      const TenantItem(
+        id: 3,
+        fullName: 'Phạm Quốc Bảo',
+        phone: '0987 654 321',
+        email: 'quocbao.pham@gmail.com',
+        idCard: '075097008911',
+        currentRoom: 'Phòng B101',
+        propertyName: 'Nhà trọ Sinh viên Thủ Đức Garden',
+        startDate: '01/09/2025',
+        status: 'ACTIVE',
+      ),
+      const TenantItem(
+        id: 4,
+        fullName: 'Nguyễn Thảo Vy',
+        phone: '0933 221 908',
+        email: 'thaovy.nguyen@gmail.com',
+        idCard: '079200003389',
+        currentRoom: 'Phòng C101',
+        propertyName: 'Căn hộ Mini Quận 7 Lotus',
+        startDate: '10/03/2026',
+        status: 'ACTIVE',
+      ),
+      const TenantItem(
+        id: 5,
+        fullName: 'Võ Đăng Khoa',
+        phone: '0971 882 119',
+        email: 'dangkhoa.vo@gmail.com',
+        idCard: '079196007721',
+        currentRoom: 'Phòng B201',
+        propertyName: 'Nhà trọ Sinh viên Thủ Đức Garden',
+        startDate: '01/05/2025',
+        status: 'TEMPORARY_ABSENT',
+      ),
+      const TenantItem(
+        id: 6,
+        fullName: 'Đặng Thu Hà',
+        phone: '0945 612 300',
+        email: 'thuha.dang@gmail.com',
+        idCard: '079198005510',
+        currentRoom: 'Phòng A102',
+        propertyName: 'Khu nhà trọ Bình Thạnh Rivera',
+        startDate: '01/03/2025',
+        status: 'MOVED_OUT',
+      ),
+    ];
+
+    _contracts = [
+      const ContractItem(
+        id: 1,
+        code: 'HD-2026-001',
+        tenantName: 'Trần Minh Hoàng',
+        roomName: 'Phòng A101',
+        propertyName: 'Khu nhà trọ Bình Thạnh Rivera',
+        startDate: '01/02/2026',
+        endDate: '01/02/2027',
+        rentPrice: 3800000,
+        depositAmount: 7600000,
+        status: 'ACTIVE',
+      ),
+      const ContractItem(
+        id: 2,
+        code: 'HD-2026-002',
+        tenantName: 'Lê Thị Ngọc Ánh',
+        roomName: 'Phòng A201',
+        propertyName: 'Khu nhà trọ Bình Thạnh Rivera',
+        startDate: '15/01/2026',
+        endDate: '15/01/2027',
+        rentPrice: 4200000,
+        depositAmount: 8400000,
+        status: 'ACTIVE',
+      ),
+      const ContractItem(
+        id: 3,
+        code: 'HD-2025-018',
+        tenantName: 'Phạm Quốc Bảo',
+        roomName: 'Phòng B101',
+        propertyName: 'Nhà trọ Sinh viên Thủ Đức Garden',
+        startDate: '01/09/2025',
+        endDate: '30/11/2026',
+        rentPrice: 2600000,
+        depositAmount: 5200000,
+        status: 'EXPIRING',
+      ),
+      const ContractItem(
+        id: 4,
+        code: 'HD-2026-009',
+        tenantName: 'Nguyễn Thảo Vy',
+        roomName: 'Phòng C101',
+        propertyName: 'Căn hộ Mini Quận 7 Lotus',
+        startDate: '10/03/2026',
+        endDate: '10/03/2027',
+        rentPrice: 4800000,
+        depositAmount: 9600000,
+        status: 'ACTIVE',
+      ),
+      const ContractItem(
+        id: 5,
+        code: 'HD-2025-004',
+        tenantName: 'Đặng Thu Hà',
+        roomName: 'Phòng A102',
+        propertyName: 'Khu nhà trọ Bình Thạnh Rivera',
+        startDate: '01/03/2025',
+        endDate: '01/03/2026',
+        rentPrice: 3500000,
+        depositAmount: 7000000,
+        status: 'EXPIRED',
+      ),
+    ];
+
+    _invoices = [
+      const InvoiceItem(
+        id: 1,
+        code: 'INV-202611-01',
+        tenantName: 'Trần Minh Hoàng',
+        roomName: 'Phòng A101',
+        propertyName: 'Khu nhà trọ Bình Thạnh Rivera',
+        billingMonth: '11/2026',
+        totalAmount: 4350000,
+        dueDate: '05/11/2026',
+        status: 'PAID',
+      ),
+      const InvoiceItem(
+        id: 2,
+        code: 'INV-202611-02',
+        tenantName: 'Lê Thị Ngọc Ánh',
+        roomName: 'Phòng A201',
+        propertyName: 'Khu nhà trọ Bình Thạnh Rivera',
+        billingMonth: '11/2026',
+        totalAmount: 4720000,
+        dueDate: '15/11/2026',
+        status: 'UNPAID',
+      ),
+      const InvoiceItem(
+        id: 3,
+        code: 'INV-202611-03',
+        tenantName: 'Phạm Quốc Bảo',
+        roomName: 'Phòng B101',
+        propertyName: 'Nhà trọ Sinh viên Thủ Đức Garden',
+        billingMonth: '11/2026',
+        totalAmount: 2980000,
+        dueDate: '05/11/2026',
+        status: 'OVERDUE',
+      ),
+      const InvoiceItem(
+        id: 4,
+        code: 'INV-202611-04',
+        tenantName: 'Nguyễn Thảo Vy',
+        roomName: 'Phòng C101',
+        propertyName: 'Căn hộ Mini Quận 7 Lotus',
+        billingMonth: '11/2026',
+        totalAmount: 5390000,
+        dueDate: '18/11/2026',
+        status: 'UNPAID',
+      ),
+      const InvoiceItem(
+        id: 5,
+        code: 'INV-202610-01',
+        tenantName: 'Trần Minh Hoàng',
+        roomName: 'Phòng A101',
+        propertyName: 'Khu nhà trọ Bình Thạnh Rivera',
+        billingMonth: '10/2026',
+        totalAmount: 4280000,
+        dueDate: '05/10/2026',
+        status: 'PAID',
+      ),
+    ];
+
+    _maintenances = [
+      const MaintenanceItem(
+        id: 1,
+        code: 'BT-001',
+        roomId: 104,
+        roomName: 'Phòng A202',
+        propertyName: 'Khu nhà trọ Bình Thạnh Rivera',
+        title: 'Điều hòa không lạnh, cần vệ sinh và nạp gas',
+        description: 'Máy lạnh Daikin 1.5HP chạy nhưng không mát, rò nước nhẹ ở dàn lạnh.',
+        createdAt: '10/11/2026',
+        priority: 'HIGH',
+        status: 'IN_PROGRESS',
+        estimatedCost: 500000,
+        actualCost: 450000,
+      ),
+      const MaintenanceItem(
+        id: 2,
+        code: 'BT-002',
+        roomId: 101,
+        roomName: 'Phòng A101',
+        propertyName: 'Khu nhà trọ Bình Thạnh Rivera',
+        title: 'Thay vòi sen và dây cấp nước phòng tắm',
+        description: 'Vòi sen bị rỉ nước ở khớp nối.',
+        createdAt: '08/11/2026',
+        priority: 'MEDIUM',
+        status: 'PENDING',
+        estimatedCost: 250000,
+        actualCost: 0,
+      ),
+      const MaintenanceItem(
+        id: 3,
+        code: 'BT-003',
+        roomId: 201,
+        roomName: 'Phòng B101',
+        propertyName: 'Nhà trọ Sinh viên Thủ Đức Garden',
+        title: 'Sửa ổ khóa vân tay cửa chính',
+        description: 'Cảm biến vân tay chập chờn, đã thay pin và hiệu chỉnh.',
+        createdAt: '02/11/2026',
+        priority: 'HIGH',
+        status: 'COMPLETED',
+        estimatedCost: 400000,
+        actualCost: 350000,
+      ),
+      const MaintenanceItem(
+        id: 4,
+        code: 'BT-004',
+        roomId: 301,
+        roomName: 'Phòng C101',
+        propertyName: 'Căn hộ Mini Quận 7 Lotus',
+        title: 'Thay bóng đèn LED âm trần khu vực bếp',
+        description: 'Cháy 2 bóng đèn LED 9W.',
+        createdAt: '01/11/2026',
+        priority: 'LOW',
+        status: 'COMPLETED',
+        estimatedCost: 150000,
+        actualCost: 140000,
+      ),
+    ];
+
+    _notifications = [
+      const NotificationItem(
+        id: 1,
+        title: 'Hóa đơn quá hạn thanh toán',
+        message: 'Hóa đơn INV-202611-03 (Phòng B101 - Phạm Quốc Bảo) đã quá hạn thanh toán.',
+        createdAt: '2 giờ trước',
+        category: 'BILLING',
+        isRead: false,
+      ),
+      const NotificationItem(
+        id: 2,
+        title: 'Yêu cầu bảo trì mới',
+        message: 'Phòng A101 gửi yêu cầu bảo trì BT-002: Thay vòi sen phòng tắm.',
+        createdAt: '5 giờ trước',
+        category: 'MAINTENANCE',
+        isRead: false,
+      ),
+      const NotificationItem(
+        id: 3,
+        title: 'Hợp đồng sắp hết hạn trong 15 ngày',
+        message: 'Hợp đồng HD-2025-018 của khách Phạm Quốc Bảo (Phòng B101) sẽ hết hạn vào 30/11/2026.',
+        createdAt: '1 ngày trước',
+        category: 'CONTRACT',
+        isRead: false,
+      ),
+      const NotificationItem(
+        id: 4,
+        title: 'Hoàn tất bảo trì phòng B101',
+        message: 'Yêu cầu BT-003 đã được nghiệm thu hoàn thành với chi phí 350.000 đ.',
+        createdAt: '3 ngày trước',
+        category: 'MAINTENANCE',
+        isRead: true,
+      ),
+    ];
+
+    _revenuePoints = const [
+      MonthlyRevenuePoint(monthLabel: 'T6', amountInMillions: 52.0),
+      MonthlyRevenuePoint(monthLabel: 'T7', amountInMillions: 56.5),
+      MonthlyRevenuePoint(monthLabel: 'T8', amountInMillions: 54.0),
+      MonthlyRevenuePoint(monthLabel: 'T9', amountInMillions: 61.2),
+      MonthlyRevenuePoint(monthLabel: 'T10', amountInMillions: 64.8),
+      MonthlyRevenuePoint(monthLabel: 'T11', amountInMillions: 68.5),
+    ];
+  }
+
+  /// Đồng bộ với Django SOA Backend (Ports 8001–8005) nếu các service đang chạy.
+  Future<void> syncWithBackend() async {
+    try {
+      for (final svc in SoaServices.all) {
+        final ok = await SoaApiClient.checkPortHealth(svc);
+        portStatus[svc.port] = ok;
+      }
+
+      if (portStatus[8002] == true) {
+        final rawProps = await SoaApiClient.getJson(SoaServices.property, '/properties/');
+        final rawRooms = await SoaApiClient.getJson(SoaServices.property, '/rooms/');
+        final rawMaint = await SoaApiClient.getJson(SoaServices.property, '/maintenance/');
+
+        if (rawProps is List && rawProps.isNotEmpty) {
+          _properties = rawProps.map((p) {
+            return PropertyItem(
+              id: p['id'] as int,
+              code: '${p['code'] ?? 'NT-${p['id']}'}',
+              name: '${p['name'] ?? ''}',
+              address: '${p['full_address'] ?? p['address'] ?? ''}',
+              district: '${p['district'] ?? ''}',
+              ward: '${p['ward'] ?? ''}',
+              totalRooms: (p['total_rooms_count'] as num?)?.toInt() ?? 0,
+              occupiedRooms: ((p['occupied_rooms_count'] as num?)?.toInt() ?? 0) +
+                  ((p['full_rooms_count'] as num?)?.toInt() ?? 0),
+              availableRooms: (p['available_rooms_count'] as num?)?.toInt() ?? 0,
+              maintenanceRooms: (p['maintenance_rooms_count'] as num?)?.toInt() ?? 0,
+              status: '${p['status'] ?? 'ACTIVE'}',
+              description: '${p['description'] ?? ''}',
+            );
+          }).toList();
+        }
+
+        if (rawRooms is List && rawRooms.isNotEmpty) {
+          _rooms = rawRooms.map((r) {
+            final st = '${r['status'] ?? 'AVAILABLE'}';
+            return RoomItem(
+              id: r['id'] as int,
+              code: '${r['code'] ?? ''}',
+              name: 'Phòng ${r['room_number'] ?? ''}',
+              propertyId: (r['property'] as num?)?.toInt() ?? 1,
+              propertyName: '${r['property_name'] ?? ''}',
+              floor: (r['floor'] as num?)?.toInt() ?? 1,
+              rentPrice: double.tryParse('${r['rent_price'] ?? 0}') ?? 0,
+              area: double.tryParse('${r['area'] ?? 20}') ?? 20,
+              currentOccupants: (r['current_occupants'] as num?)?.toInt() ?? 0,
+              maxOccupants: (r['max_occupants'] as num?)?.toInt() ?? 2,
+              status: st == 'FULL' ? 'OCCUPIED' : st,
+              description: '${r['description'] ?? ''}',
+            );
+          }).toList();
+        }
+
+        if (rawMaint is List && rawMaint.isNotEmpty) {
+          _maintenances = rawMaint.map((m) {
+            return MaintenanceItem(
+              id: m['id'] as int,
+              code: '${m['code'] ?? ''}',
+              roomId: (m['room'] as num?)?.toInt() ?? 0,
+              roomName: 'Phòng ${m['room_number'] ?? ''}',
+              propertyName: '${m['property_name'] ?? ''}',
+              title: '${m['title'] ?? ''}',
+              description: '${m['description'] ?? ''}',
+              createdAt: '${m['requested_date'] ?? ''}',
+              priority: '${m['priority'] ?? 'MEDIUM'}',
+              status: '${m['status'] ?? 'PENDING'}',
+              estimatedCost: double.tryParse('${m['estimated_cost'] ?? 0}') ?? 0,
+              actualCost: double.tryParse('${m['actual_cost'] ?? 0}') ?? 0,
+            );
+          }).toList();
+        }
+        isBackendConnected = true;
+      } else {
+        isBackendConnected = false;
+      }
+    } catch (_) {
+      isBackendConnected = false;
+    }
+    notifyListeners();
+  }
+
+  // ---------------- CRUD PROPERTY ----------------
+  void addProperty(PropertyItem item) {
+    _properties = [item, ..._properties];
+    notifyListeners();
+  }
+
+  void updateProperty(PropertyItem updated) {
+    _properties = [
+      for (final p in _properties) p.id == updated.id ? updated : p,
+    ];
+    notifyListeners();
+  }
+
+  void deleteProperty(int id) {
+    _properties = _properties.where((p) => p.id != id).toList();
+    notifyListeners();
+  }
+
+  // ---------------- CRUD ROOM ----------------
+  void addRoom(RoomItem item) {
+    _rooms = [item, ..._rooms];
+    _recalculatePropertyCounts();
+    notifyListeners();
+  }
+
+  void updateRoom(RoomItem updated) {
+    _rooms = [
+      for (final r in _rooms) r.id == updated.id ? updated : r,
+    ];
+    _recalculatePropertyCounts();
+    notifyListeners();
+  }
+
+  void deleteRoom(int id) {
+    _rooms = _rooms.where((r) => r.id != id).toList();
+    _recalculatePropertyCounts();
+    notifyListeners();
+  }
+
+  void _recalculatePropertyCounts() {
+    _properties = _properties.map((p) {
+      final pRooms = _rooms.where((r) => r.propertyId == p.id).toList();
+      if (pRooms.isEmpty) return p;
+      return p.copyWith(
+        totalRooms: pRooms.length,
+        occupiedRooms: pRooms.where((r) => r.status == 'OCCUPIED' || r.status == 'RESERVED').length,
+        availableRooms: pRooms.where((r) => r.status == 'AVAILABLE').length,
+        maintenanceRooms: pRooms.where((r) => r.status == 'MAINTENANCE').length,
+      );
+    }).toList();
+  }
+
+  // ---------------- CRUD TENANT ----------------
+  void addTenant(TenantItem item) {
+    _tenants = [item, ..._tenants];
+    notifyListeners();
+  }
+
+  void updateTenant(TenantItem updated) {
+    _tenants = [
+      for (final t in _tenants) t.id == updated.id ? updated : t,
+    ];
+    notifyListeners();
+  }
+
+  void deleteTenant(int id) {
+    _tenants = _tenants.where((t) => t.id != id).toList();
+    notifyListeners();
+  }
+
+  // ---------------- CRUD CONTRACT ----------------
+  void addContract(ContractItem item) {
+    _contracts = [item, ..._contracts];
+    notifyListeners();
+  }
+
+  void updateContract(ContractItem updated) {
+    _contracts = [
+      for (final c in _contracts) c.id == updated.id ? updated : c,
+    ];
+    notifyListeners();
+  }
+
+  void deleteContract(int id) {
+    _contracts = _contracts.where((c) => c.id != id).toList();
+    notifyListeners();
+  }
+
+  // ---------------- CRUD INVOICE ----------------
+  void addInvoice(InvoiceItem item) {
+    _invoices = [item, ..._invoices];
+    notifyListeners();
+  }
+
+  void updateInvoice(InvoiceItem updated) {
+    _invoices = [
+      for (final i in _invoices) i.id == updated.id ? updated : i,
+    ];
+    notifyListeners();
+  }
+
+  void deleteInvoice(int id) {
+    _invoices = _invoices.where((i) => i.id != id).toList();
+    notifyListeners();
+  }
+
+  // ---------------- CRUD MAINTENANCE ----------------
+  void addMaintenance(MaintenanceItem item) {
+    _maintenances = [item, ..._maintenances];
+    notifyListeners();
+  }
+
+  void updateMaintenance(MaintenanceItem updated) {
+    _maintenances = [
+      for (final m in _maintenances) m.id == updated.id ? updated : m,
+    ];
+    notifyListeners();
+  }
+
+  void deleteMaintenance(int id) {
+    _maintenances = _maintenances.where((m) => m.id != id).toList();
+    notifyListeners();
+  }
+
+  // ---------------- NOTIFICATIONS ----------------
+  void markAllNotificationsRead() {
+    _notifications = _notifications.map((n) => n.copyWith(isRead: true)).toList();
+    notifyListeners();
+  }
+
+  void toggleNotificationRead(int id) {
+    _notifications = [
+      for (final n in _notifications)
+        n.id == id ? n.copyWith(isRead: !n.isRead) : n,
+    ];
+    notifyListeners();
+  }
+}
+

@@ -1,39 +1,24 @@
 import 'package:intl/intl.dart';
 
-class Formatters {
-  static final NumberFormat _currencyFormat = NumberFormat.currency(
-    locale: 'vi_VN',
-    symbol: '₫',
-    decimalDigits: 0,
-  );
+class AppFormatters {
+  AppFormatters._();
 
-  static String formatCurrency(dynamic amount) {
-    if (amount == null) return '0 ₫';
-    if (amount is String) {
-      double parsed = double.tryParse(amount) ?? 0.0;
-      return _currencyFormat.format(parsed);
-    }
-    return _currencyFormat.format(amount);
+  static final NumberFormat _currency = NumberFormat.decimalPattern('vi_VN');
+
+  static String currency(num? amount) {
+    return '${_currency.format(amount ?? 0)} đ';
   }
 
-  static String formatDate(String? dateStr) {
-    if (dateStr == null || dateStr.isEmpty) return 'Chưa cập nhật';
-    try {
-      DateTime dt = DateTime.parse(dateStr);
-      return DateFormat('dd/MM/yyyy HH:mm').format(dt.toLocal());
-    } catch (_) {
-      return dateStr;
-    }
+  static String date(DateTime? dt) {
+    if (dt == null) return '—';
+    return DateFormat('dd/MM/yyyy').format(dt);
   }
 
-  static String formatDateOnly(String? dateStr) {
-    if (dateStr == null || dateStr.isEmpty) return 'Chưa cập nhật';
-    try {
-      DateTime dt = DateTime.parse(dateStr);
-      return DateFormat('dd/MM/yyyy').format(dt);
-    } catch (_) {
-      return dateStr;
-    }
+  static String dateStr(String? raw) {
+    if (raw == null || raw.isEmpty) return '—';
+    final parsed = DateTime.tryParse(raw);
+    if (parsed == null) return raw;
+    return DateFormat('dd/MM/yyyy').format(parsed.toLocal());
   }
 }
 

@@ -1,103 +1,75 @@
-# HỆ THỐNG QUẢN LÝ NHÀ TRỌ (MICROSERVICES ARCHITECTURE)
+# 🏢 Hệ Thống Quản Lý Nhà Trọ — Kiến Trúc SOA Microservices
 
-Hệ thống quản lý nhà trọ và phòng trọ chuyên nghiệp với kiến trúc phân tầng Microservices.
-- **Frontend**: Flutter (Provider State Management, Material 3, Clean Architecture)
-- **Backend**: Django REST Framework + SimpleJWT Authentication
-- **Database**: Microsoft SQL Server (mssql-django / pyodbc)
-
----
-
-## 🏛️ KIẾN TRÚC 5 DỊCH VỤ (5 SERVICES)
-
-| Service | Tên dịch vụ | Vai trò | Trạng thái |
-| :--- | :--- | :--- | :--- |
-| **SERVICE 1** | **Identity Service** | Đăng nhập JWT, Phân quyền (ADMIN, LANDLORD, STAFF, TENANT), Quản lý hồ sơ | 🟢 **Sprint 1 — Hoàn thành** |
-| **SERVICE 2** | **Property & Maintenance** | Quản lý nhà trọ, danh sách phòng, trạng thái phòng (Trống, Đang thuê, Bảo trì, Đã cọc), chỉ số điện nước, phiếu bảo trì | 🟢 **Sprint 1 — Hoàn thành** |
-| **SERVICE 3** | **Tenant Service** | Quản lý người thuê, CCCD, thông tin tạm trú, liên hệ khẩn cấp | 🟡 **Sprint 2 — Đã scaffold service & models** |
-| **SERVICE 4** | **Contract Service** | Tạo hợp đồng, gia hạn hợp đồng, kết thúc hợp đồng & hoàn cọc | 🟡 **Sprint 2 — Đã scaffold service & models** |
-| **SERVICE 5** | **Billing & Notification** | Tính hóa đơn tự động, VietQR thanh toán, thông báo nhắc nợ | ⚪ **Sprint 3 — Đã scaffold service & models** |
+Hệ thống được thiết kế theo kiến trúc **Service-Oriented Architecture (SOA)**:
+- **Mỗi Service chạy trên 1 Port riêng biệt** (`8001` → `8005`) và sở hữu **1 Database SQL Server độc lập** (không dùng Foreign Key chéo giữa các service).
+- **Port `8000`** đóng vai trò là **Cổng Giao Diện Web Tổng Hợp (Unified Web Portal)**, **API Gateway** và **Trang API Docs & Kiểm Tra Sức Khỏe Hệ Thống (Health Check)**.
+- **Xác thực JWT Stateless**: Identity Service (`8001`) phát hành JWT chứa sẵn thông tin phân quyền (`user_id`, `username`, `role`), giúp các service khác xác thực yêu cầu độc lập.
 
 ---
 
-## 🚀 HƯỚNG DẪN KHỞI CHẠY (QUICK START)
+## 🌐 Danh Sách Cổng Dịch Vụ (Ports) & Databases
 
-### 1. Khởi chạy Backend (Django + SQL Server)
+| Cổng (Port) | Tên Dịch Vụ / Giao Diện | Database (SQL Server) | URL Truy Cập |
+| :---: | :--- | :--- | :--- |
+| **`8000`** | **Giao Diện Web Tổng Hợp & API Gateway** | *(Điều hướng 5 DB)* | `http://127.0.0.1:8000/` |
+| **`8000`** | **Trang API Docs & Kiểm Tra Hoạt Động Services** | *(Live Health Check)* | `http://127.0.0.1:8000/api-docs/` |
+| **`8001`** | **Service 1 — Identity & Authentication** | `nhatro_identity_db` | `http://127.0.0.1:8001/` |
+| **`8002`** | **Service 2 — Property & Maintenance Service** | `nhatro_property_db` | `http://127.0.0.1:8002/` |
+| **`8003`** | **Service 3 — Tenant Service (Sprint 2)** | `nhatro_tenant_db` | `http://127.0.0.1:8003/` |
+| **`8004`** | **Service 4 — Contract Service (Sprint 2)** | `nhatro_contract_db` | `http://127.0.0.1:8004/` |
+| **`8005`** | **Service 5 — Billing & Notification (Sprint 3)** | `nhatro_billing_db` | `http://127.0.0.1:8005/` |
 
-```bash
-cd backend
+---
 
-# Kích hoạt môi trường ảo Python
-.\venv\Scripts\Activate.ps1
+## 🚀 Cách Khởi Chạy Toàn Bộ Hệ Thống (`run_all`)
 
-# Cài đặt thư viện (nếu cần)
-pip install -r requirements.txt
+Từ thư mục gốc của project, chạy 1 trong 2 lệnh sau để bật đồng thời cả 6 cổng (`8000` → `8005`):
 
-# Chạy migrate cơ sở dữ liệu trên SQL Server
-python manage.py migrate
-
-# Khởi tạo dữ liệu mẫu (Tài khoản Admin, Chủ trọ, Nhà trọ, Phòng mẫu)
-python seed_data.py
-
-# Khởi động Backend API server tại cổng 8000
-python manage.py runserver 0.0.0.0:8000
+```powershell
+python run_all.py
+```
+Hoặc chạy file batch trên Windows:
+```powershell
+.\run_all.bat
 ```
 
-> **Swagger UI API Docs**: Truy cập `http://127.0.0.1:8000/api/docs/` để xem và test toàn bộ API endpoints trực tiếp trên trình duyệt.
+Sau khi chạy, mở trình duyệt tại:
+- **Giao diện Quản lý Tổng hợp**: [http://127.0.0.1:8000/](http://127.0.0.1:8000/)
+- **Trang API Docs & Kiểm tra Services**: [http://127.0.0.1:8000/api-docs/](http://127.0.0.1:8000/api-docs/)
+- **Swagger OpenAPI UI**: [http://127.0.0.1:8000/api/docs/](http://127.0.0.1:8000/api/docs/)
 
-### 2. Khởi chạy Frontend (Flutter)
-
-```bash
-cd frontend
-
-# Lấy dependencies
-flutter pub get
-
-# Chạy ứng dụng trên Windows Desktop, Chrome hoặc thiết bị di động
-flutter run -d windows
-# hoặc chạy Web:
-flutter run -d chrome
-```
+### Tài khoản kiểm thử mặc định
+- **Chủ nhà trọ (`LANDLORD`)**: `chutro1` / `chutropassword123`
+- **Quản trị viên (`ADMIN`)**: `admin` / `adminpassword123`
+- **Khách thuê (`TENANT`)**: `khach1` / `khachpassword123`
 
 ---
 
-## 🔑 TÀI KHOẢN MẪU ĐỂ TEST HỆ THỐNG (ĐÃ SEED SẴN)
+## 📁 Cấu Trúc Thư Mục Đã Tối Giản
 
-| Vai trò (Role) | Username | Password | Quyền hạn |
-| :--- | :--- | :--- | :--- |
-| **Chủ nhà trọ (LANDLORD)** | `chutro1` | `chutropassword123` | Quản lý toàn bộ nhà trọ và phòng trọ của mình, thay đổi trạng thái phòng |
-| **Quản trị viên (ADMIN)** | `admin` | `adminpassword123` | Toàn quyền quản trị hệ thống, người dùng và tất cả nhà trọ |
-| **Khách thuê (TENANT)** | `khach1` | `khachpassword123` | Xem thông tin phòng, tiện ích, biểu phí |
-
----
-
-## 📁 CẤU TRÚC THƯ MỤC
-
-```
+```text
 nhatro_management/
-├── backend/
-│   ├── config/                      # Django Settings & Global URL routing & Swagger
-│   ├── services/
-│   │   ├── identity_service/        # SERVICE 1: Auth & Role-Based Access Control
-│   │   ├── property_service/        # SERVICE 2: Nhà trọ & Phòng trọ
-│   │   ├── tenant_service/          # SERVICE 3: Khách thuê (Sprint 2)
-│   │   ├── contract_service/        # SERVICE 4: Hợp đồng (Sprint 2)
-│   │   └── billing_notification_service/ # SERVICE 5: Hóa đơn & Thông báo
-│   ├── manage.py
-│   ├── seed_data.py                 # Nạp sẵn tài khoản và phòng trọ mẫu
-│   └── requirements.txt
-└── frontend/                        # Ứng dụng Flutter
-    ├── lib/
-    │   ├── core/                    # Constants, API Client, Theme, Storage
-    │   ├── models/                  # User, Property, Room Models
-    │   ├── providers/               # AuthProvider, PropertyProvider
-    │   ├── screens/
-    │   │   ├── auth/                # Màn hình đăng nhập
-    │   │   ├── home/                # Main Navigation Shell
-    │   │   ├── property/            # Danh sách & Chi tiết & Thêm/Sửa nhà trọ
-    │   │   ├── room/                # Chi tiết & Thêm/Sửa & Đổi trạng thái phòng
-    │   │   └── future_services/     # Màn hình lộ trình Sprint 2 & 3
-    │   ├── widgets/                 # Badge, StatCard, CustomTextField
-    │   └── main.dart
-    └── pubspec.yaml
+├── run_all.py                        # Script khởi chạy đồng thời tất cả Services (Port 8000 -> 8005)
+├── run_all.bat                       # File chạy nhanh trên Windows
+├── README.md                         # Tài liệu hướng dẫn
+└── backend/
+    ├── manage.py
+    ├── create_db.py                  # Khởi tạo 5 Databases trên SQL Server
+    ├── seed_data.py                  # Nạp dữ liệu mẫu cho Identity, Property, Room & Maintenance
+    ├── run_all_services.py           # Bộ điều phối tiến trình đa cổng (Multi-port runner)
+    ├── templates/
+    │   ├── portal.html               # Giao diện Web Tổng hợp trên Port 8000
+    │   └── api_docs.html             # Trang API Docs & Kiểm tra hoạt động các Services
+    ├── config/
+    │   ├── settings.py               # Cấu hình Multi-DB, JWT, CORS
+    │   ├── db_router.py              # SOA Database Router (Database-per-service)
+    │   ├── service_auth.py           # Xác thực Stateless JWT
+    │   ├── architecture_views.py     # Health Check & Trang chủ riêng cho từng Port
+    │   └── urls.py                   # Định tuyến Port 8000
+    └── services/
+        ├── identity_service/         # Service 1 (Port 8001)
+        ├── property_service/         # Service 2 (Port 8002): Property, Room, Status, Maintenance
+        ├── tenant_service/           # Service 3 (Port 8003)
+        ├── contract_service/         # Service 4 (Port 8004)
+        └── billing_notification_service/ # Service 5 (Port 8005)
 ```
-
