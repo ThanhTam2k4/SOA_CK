@@ -1,28 +1,42 @@
+/// Toàn bộ request của Frontend đi qua API Gateway (:8000).
+/// Frontend KHÔNG biết địa chỉ nội bộ của 5 service (8001–8005).
+///
+/// Đổi địa chỉ Gateway khi build/chạy:
+///   flutter run -d chrome --dart-define=API_GATEWAY_URL=http://192.168.1.10:8000
+/// Android Emulator: --dart-define=API_GATEWAY_URL=http://10.0.2.2:8000
 class ApiConstants {
-  // Mặc định chạy local trên Windows / Web / Desktop
-  // Nếu test trên Android Emulator: đổi thành 'http://10.0.2.2:8000/api/v1'
-  static String baseUrl = 'http://127.0.0.1:8000/api/v1';
+  static const String gatewayUrl = String.fromEnvironment(
+    'API_GATEWAY_URL',
+    defaultValue: 'http://127.0.0.1:8000',
+  );
 
-  // SPRINT 1 — ARCHITECTURE & SERVICE INTEGRATION CHECK
-  static String architectureStatus = '$baseUrl/architecture/status/';
+  static const String baseUrl = '$gatewayUrl/api';
 
-  // SPRINT 1 — SERVICE 1: IDENTITY & AUTHENTICATION
-  static String login = '$baseUrl/auth/login/';
-  static String register = '$baseUrl/auth/register/';
-  static String refreshToken = '$baseUrl/auth/refresh/';
-  static String currentUser = '$baseUrl/auth/me/';
-  static String users = '$baseUrl/users/';
+  // GATEWAY — endpoint do chính Gateway xử lý / tổng hợp
+  static const String systemHealth = '$baseUrl/system/health/';
+  static const String dashboardSummary = '$baseUrl/dashboard/summary/';
 
-  // SPRINT 1 — SERVICE 2: PROPERTY & ROOM MANAGEMENT
-  static String properties = '$baseUrl/properties/';
-  static String rooms = '$baseUrl/rooms/';
+  // SERVICE 1 — IDENTITY (Gateway -> :8001)
+  static const String login = '$baseUrl/auth/login/';
+  static const String register = '$baseUrl/auth/register/';
+  static const String refreshToken = '$baseUrl/auth/refresh/';
+  static const String currentUser = '$baseUrl/auth/me/';
+  static const String logout = '$baseUrl/auth/logout/';
+  static const String changePassword = '$baseUrl/auth/change-password/';
+  static const String users = '$baseUrl/users/';
 
-  // SPRINT 2 (LỘ TRÌNH TIẾP THEO) — SERVICE 3: TENANT
-  static String tenantStatus = '$baseUrl/tenants/status/';
+  // SERVICE 2 — PROPERTY & MAINTENANCE (Gateway -> :8002)
+  static const String properties = '$baseUrl/properties/';
+  static const String rooms = '$baseUrl/rooms/';
+  static const String maintenance = '$baseUrl/maintenance/';
 
-  // SPRINT 2 (LỘ TRÌNH TIẾP THEO) — SERVICE 4: CONTRACT
-  static String contractStatus = '$baseUrl/contracts/status/';
+  // SERVICE 3 — TENANT (Gateway -> :8003)
+  static const String tenants = '$baseUrl/tenants/';
 
-  // SPRINT 3 (LỘ TRÌNH TIẾP THEO) — SERVICE 5: BILLING & NOTIFICATION
-  static String billingStatus = '$baseUrl/billing/status/';
+  // SERVICE 4 — CONTRACT (Gateway -> :8004)
+  static const String contracts = '$baseUrl/contracts/';
+
+  // SERVICE 5 — BILLING & NOTIFICATION (Gateway -> :8005)
+  static const String invoices = '$baseUrl/billing/invoices/';
+  static const String notifications = '$baseUrl/notifications/';
 }

@@ -1,7 +1,11 @@
-from django.urls import path
-from .views import TenantServiceStatusView
+from django.urls import include, path
+from rest_framework.routers import DefaultRouter
+
+from .views import TenantProfileViewSet
+
+router = DefaultRouter()
+router.register(r'tenants', TenantProfileViewSet, basename='tenant')
 
 urlpatterns = [
-    path('status/', TenantServiceStatusView.as_view(), name='tenant_service_status'),
+    path('', include(router.urls)),
 ]
-

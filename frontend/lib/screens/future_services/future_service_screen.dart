@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
-import '../../core/network/api_client.dart';
+import '../../features/dashboard/widgets/soa_architecture_card.dart';
+import '../../models/system_health_model.dart';
+import '../../shared/services/app_data_repository.dart';
 
 class FutureServiceScreen extends StatefulWidget {
   final String title;
@@ -7,7 +9,8 @@ class FutureServiceScreen extends StatefulWidget {
   final String sprintName;
   final IconData icon;
   final Color themeColor;
-  final String statusApiUrl;
+  /// Key của service trong API Gateway (identity/property/tenant/contract/billing).
+  final String serviceKey;
   final List<String> plannedFeatures;
 
   const FutureServiceScreen({
@@ -17,7 +20,7 @@ class FutureServiceScreen extends StatefulWidget {
     required this.sprintName,
     required this.icon,
     required this.themeColor,
-    required this.statusApiUrl,
+    required this.serviceKey,
     required this.plannedFeatures,
   });
 
@@ -27,7 +30,7 @@ class FutureServiceScreen extends StatefulWidget {
 
 class _FutureServiceScreenState extends State<FutureServiceScreen> {
   bool _isLoading = false;
-  Map<String, dynamic>? _backendStatus;
+  ServiceHealth? _serviceHealth;
   String? _error;
 
   @override
@@ -36,26 +39,21 @@ class _FutureServiceScreenState extends State<FutureServiceScreen> {
     _checkBackendServiceStatus();
   }
 
+  /// Trạng thái thực tế của service này, do API Gateway kiểm tra (/api/system/health/).
   Future<void> _checkBackendServiceStatus() async {
     setState(() {
       _isLoading = true;
       _error = null;
     });
 
-    try {
-      final res = await ApiClient.get(widget.statusApiUrl);
-      if (res is Map<String, dynamic>) {
-        setState(() {
-          _backendStatus = res;
-          _isLoading = false;
-        });
-      }
-    } catch (e) {
-      setState(() {
-        _error = e.toString();
-        _isLoading = false;
-      });
-    }
+    final health = await const AppDataRepository().fetchSystemHealth();
+    if (!mounted) return;
+    setState(() {
+      _serviceHealth = health.service(widget.serviceKey);
+      _error = health.error ??
+          (_serviceHealth == null ? 'API Gateway không có thông tin về service này.' : null);
+      _isLoading = false;
+    });
   }
 
   @override
@@ -169,47 +167,8 @@ class _FutureServiceScreenState extends State<FutureServiceScreen> {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         ),
                       )
-                    else if (_backendStatus != null)
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFF0FDF4),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: const Color(0xFFBBF7D0)),
-                        ),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Icon(Icons.check_circle_rounded, color: Color(0xFF16A34A), size: 22),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    'Dịch vụ đã sẵn sàng trong cấu trúc SOA: ${_backendStatus!['status']}',
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.w700,
-                                      color: Color(0xFF15803D),
-                                      fontSize: 13,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 3),
-                                  Text(
-                                    'Database riêng: ${_backendStatus!['database'] ?? 'Isolated DB'}',
-                                    style: const TextStyle(color: Color(0xFF166534), fontSize: 12, fontWeight: FontWeight.w600),
-                                  ),
-                                  const SizedBox(height: 2),
-                                  Text(
-                                    '${_backendStatus!['message'] ?? 'Hoàn thành trong sprint tiếp theo.'}',
-                                    style: const TextStyle(color: Color(0xFF4B5563), fontSize: 12),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                      )
+                    else if (_serviceHealth != null)
+                      _buildServiceStatus(_serviceHealth!)
                     else
                       Container(
                         padding: const EdgeInsets.all(12),
@@ -224,7 +183,7 @@ class _FutureServiceScreenState extends State<FutureServiceScreen> {
                             const SizedBox(width: 8),
                             Expanded(
                               child: Text(
-                                _error ?? 'Không thể kết nối đến máy chủ backend.',
+                                _error ?? 'Không thể kết nối đến API Gateway.',
                                 style: const TextStyle(color: Color(0xFFDC2626), fontSize: 12.5),
                               ),
                             ),
@@ -253,7 +212,7 @@ class _FutureServiceScreenState extends State<FutureServiceScreen> {
                         Icon(Icons.checklist_rounded, size: 20, color: Color(0xFF2563EB)),
                         SizedBox(width: 8),
                         Text(
-                          'Các tính năng sẽ hoàn thành trong Sprint tiếp theo:',
+                          'API backend đã có qua Gateway — giao diện sẽ hoàn thiện ở Sprint tiếp theo:',
                           style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Color(0xFF0F172A)),
                         ),
                       ],
@@ -293,6 +252,55 @@ class _FutureServiceScreenState extends State<FutureServiceScreen> {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildServiceStatus(ServiceHealth health) {
+    final color = SoaArchitectureCard.statusColor(health.status);
+    final label = SoaArchitectureCard.statusLabel(health.status);
+    final isUp = health.status == ServiceStatus.up;
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withOpacity(0.35)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            isUp ? Icons.check_circle_rounded : Icons.error_outline_rounded,
+            color: color,
+            size: 22,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${health.name} (port ${health.port}): $label',
+                  style: TextStyle(fontWeight: FontWeight.w700, color: color, fontSize: 13),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  isUp
+                      ? 'Database: ${health.databaseStatus ?? '-'}'
+                          '${health.responseTimeMs != null ? ' • phản hồi ${health.responseTimeMs!.toStringAsFixed(0)} ms' : ''}'
+                      : (health.error ?? 'Service không phản hồi.'),
+                  style: const TextStyle(color: Color(0xFF4B5563), fontSize: 12),
+                ),
+                const SizedBox(height: 2),
+                const Text(
+                  'Kiểm tra qua API Gateway :8000 • /api/system/health/',
+                  style: TextStyle(color: Color(0xFF64748B), fontSize: 11.5),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

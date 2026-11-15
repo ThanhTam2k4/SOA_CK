@@ -47,6 +47,14 @@ class RegisterSerializer(serializers.ModelSerializer):
             'address',
         ]
 
+    # Đăng ký công khai không được tự cấp quyền ADMIN/STAFF.
+    PUBLIC_ROLES = (UserRole.LANDLORD, UserRole.TENANT)
+
+    def validate_role(self, value):
+        if value and value not in self.PUBLIC_ROLES:
+            raise serializers.ValidationError('Chỉ được đăng ký vai trò LANDLORD hoặc TENANT.')
+        return value
+
     def create(self, validated_data):
         password = validated_data.pop('password')
         # Mặc định người dùng đăng ký ngoài là LANDLORD nếu không chọn
@@ -60,8 +68,20 @@ class RegisterSerializer(serializers.ModelSerializer):
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     """
-    Kèm thông tin User và Phân quyền trực tiếp trong response Login
+    Kèm thông tin User và Phân quyền trực tiếp trong response Login.
+    Đồng thời nhúng claims (username, role, is_superuser) vào JWT để các service
+    khác xác thực STATELESS mà không cần truy cập database của Identity Service.
     """
+    @classmethod
+    def get_token(cls, user):
+        token = super().get_token(user)
+        token['username'] = user.username
+        token['role'] = user.role
+        token['is_superuser'] = user.is_superuser
+        token['is_staff'] = user.is_staff
+        token['full_name'] = user.full_name
+        return token
+
     def validate(self, attrs):
         data = super().validate(attrs)
         user = self.user
@@ -81,3 +101,23 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         }
         return data
 
+
+
+class ChangePasswordSerializer(serializers.Serializer):
+    old_password = serializers.CharField(write_only=True)
+    new_password = serializers.CharField(write_only=True, min_length=6)
+
+    def validate_old_password(self, value):
+        user = self.context['request'].user
+        if not user.check_password(value):
+            raise serializers.ValidationError('Mật khẩu hiện tại không đúng.')
+        return value
+
+    def validate(self, attrs):
+        if attrs['old_password'] == attrs['new_password']:
+            raise serializers.ValidationError({'new_password': 'Mật khẩu mới phải khác mật khẩu hiện tại.'})
+        return attrs
+
+
+class LogoutSerializer(serializers.Serializer):
+    refresh = serializers.CharField()

@@ -89,6 +89,7 @@ class Room(models.Model):
         max_digits=12, decimal_places=2, default=0.0, verbose_name='Tiền cọc (VNĐ)'
     )
     max_occupants = models.PositiveIntegerField(default=2, verbose_name='Số người ở tối đa')
+    current_occupants = models.PositiveIntegerField(default=0, verbose_name='Số người đang ở')
     status = models.CharField(
         max_length=20,
         choices=RoomStatus.choices,
@@ -118,3 +119,57 @@ class Room(models.Model):
 
     def __str__(self):
         return f"{self.property.name} - Phòng {self.room_number} ({self.get_status_display()})"
+
+
+class MaintenancePriority(models.TextChoices):
+    LOW = 'LOW', 'Thấp'
+    MEDIUM = 'MEDIUM', 'Trung bình'
+    HIGH = 'HIGH', 'Cao'
+    URGENT = 'URGENT', 'Khẩn cấp'
+
+
+class MaintenanceStatus(models.TextChoices):
+    PENDING = 'PENDING', 'Chờ xử lý'
+    IN_PROGRESS = 'IN_PROGRESS', 'Đang xử lý'
+    COMPLETED = 'COMPLETED', 'Đã hoàn thành'
+    CANCELLED = 'CANCELLED', 'Đã hủy'
+
+
+class MaintenanceRequest(models.Model):
+    """
+    SERVICE 2 (MAINTENANCE): Yêu cầu bảo trì / sửa chữa phòng.
+    Quan hệ ForeignKey nội bộ tới Room (cùng service). Người báo cáo lưu dạng ID
+    (reported_by_id — Identity Service), không dùng FK chéo service.
+    """
+    room = models.ForeignKey(Room, on_delete=models.CASCADE, related_name='maintenance_requests',
+                             verbose_name='Phòng')
+    title = models.CharField(max_length=200, verbose_name='Tiêu đề')
+    description = models.TextField(blank=True, null=True, verbose_name='Mô tả sự cố')
+    priority = models.CharField(max_length=10, choices=MaintenancePriority.choices,
+                                default=MaintenancePriority.MEDIUM, verbose_name='Mức độ ưu tiên')
+    status = models.CharField(max_length=20, choices=MaintenanceStatus.choices,
+                              default=MaintenanceStatus.PENDING, verbose_name='Trạng thái')
+    reported_by_id = models.IntegerField(null=True, blank=True, db_index=True,
+                                         verbose_name='ID Người báo (Identity Service)')
+    assigned_to = models.CharField(max_length=150, blank=True, null=True, verbose_name='Người/đơn vị xử lý')
+    cost = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='Chi phí (VNĐ)')
+    resolution_note = models.TextField(blank=True, null=True, verbose_name='Kết quả xử lý')
+    # Trạng thái phòng trước khi khóa để bảo trì (khôi phục khi hoàn thành/hủy).
+    previous_room_status = models.CharField(max_length=20, choices=RoomStatus.choices, blank=True, null=True)
+
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Yêu cầu bảo trì'
+        verbose_name_plural = 'Danh sách Yêu cầu bảo trì'
+        ordering = ['-created_at']
+
+    @property
+    def is_open(self):
+        return self.status in (MaintenanceStatus.PENDING, MaintenanceStatus.IN_PROGRESS)
+
+    def __str__(self):
+        return f"[{self.get_status_display()}] {self.title} - Phòng #{self.room_id}"

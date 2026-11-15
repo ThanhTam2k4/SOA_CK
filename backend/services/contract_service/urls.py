@@ -1,7 +1,11 @@
-from django.urls import path
-from .views import ContractServiceStatusView
+from django.urls import include, path
+from rest_framework.routers import DefaultRouter
+
+from .views import ContractViewSet
+
+router = DefaultRouter()
+router.register(r'contracts', ContractViewSet, basename='contract')
 
 urlpatterns = [
-    path('status/', ContractServiceStatusView.as_view(), name='contract_service_status'),
+    path('', include(router.urls)),
 ]
-

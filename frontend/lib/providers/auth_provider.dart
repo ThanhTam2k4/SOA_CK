@@ -95,6 +95,13 @@ class AuthProvider with ChangeNotifier {
   }
 
   Future<void> logout() async {
+    // Thu hồi refresh token ở Identity Service (qua Gateway). Lỗi mạng không chặn đăng xuất cục bộ.
+    try {
+      final refresh = await AuthStorage.getRefreshToken();
+      if (refresh != null && refresh.isNotEmpty) {
+        await ApiClient.post(ApiConstants.logout, {'refresh': refresh});
+      }
+    } catch (_) {}
     await AuthStorage.clearAuthData();
     _user = null;
     _isAuthenticated = false;

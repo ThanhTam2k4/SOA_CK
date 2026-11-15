@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Property, Room
+from .models import MaintenanceRequest, Property, Room
 
 @admin.register(Property)
 class PropertyAdmin(admin.ModelAdmin):
@@ -12,3 +12,9 @@ class RoomAdmin(admin.ModelAdmin):
     list_display = ('room_number', 'property', 'floor', 'rent_price', 'status', 'area', 'max_occupants')
     list_filter = ('status', 'property', 'floor')
     search_fields = ('room_number', 'property__name')
+
+
+@admin.register(MaintenanceRequest)
+class MaintenanceRequestAdmin(admin.ModelAdmin):
+    list_display = ('title', 'room', 'priority', 'status', 'reported_by_id', 'created_at')
+    list_filter = ('status', 'priority')

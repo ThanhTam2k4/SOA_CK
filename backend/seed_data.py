@@ -1,24 +1,40 @@
+"""
+Nạp dữ liệu mẫu vào database RIÊNG của từng service.
+
+Script dev này dùng TOOLBOX settings (config.settings) để ghi lần lượt vào 5 database
+qua ServiceDatabaseRouter. Liên kết giữa các service chỉ là ID (owner_id, room_id,
+tenant_id...), không có Foreign Key chéo. Runtime KHÔNG dùng cách truy cập này —
+mỗi service chỉ đọc/ghi database của chính nó.
+
+Chạy sau khi đã migrate: python run_all_services.py --migrate (hoặc migrate từng service).
+"""
 import os
+from datetime import timedelta
+
 import django
 
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
 django.setup()
 
-from django.contrib.auth import get_user_model
-from services.identity_service.models import UserRole
-from services.property_service.models import Property, Room, RoomStatus
+from django.contrib.auth import get_user_model  # noqa: E402
+from django.utils import timezone  # noqa: E402
+from services.billing_notification_service.models import Invoice, InvoiceStatus, Notification  # noqa: E402
+from services.contract_service.models import Contract, ContractEvent, ContractStatus  # noqa: E402
+from services.identity_service.models import UserRole  # noqa: E402
+from services.property_service.models import MaintenanceRequest, Property, Room, RoomStatus  # noqa: E402
+from services.tenant_service.models import RentalHistory, TenantProfile, TenantStatus  # noqa: E402
 
 User = get_user_model()
 
 def seed():
     print("=" * 60)
-    print("🚀 SEEDING INITIAL DATA FOR SPRINT 1 (SOA ARCHITECTURE)")
+    print("🚀 SEEDING INITIAL DATA (SOA — 5 SERVICES)")
     print("=" * 60)
 
     # -------------------------------------------------------------
     # 1. IDENTITY SERVICE (default database: nhatro_identity_db)
     # -------------------------------------------------------------
-    print("\n[1/2] Seeding Identity Service (nhatro_identity_db)...")
+    print("\n[1/5] Seeding Identity Service (nhatro_identity_db)...")
 
     # Admin
     admin_user, created = User.objects.using('default').get_or_create(
@@ -85,7 +101,7 @@ def seed():
     # -------------------------------------------------------------
     # 2. PROPERTY SERVICE (property_db: nhatro_property_db)
     # -------------------------------------------------------------
-    print("\n[2/2] Seeding Property & Room Service (nhatro_property_db)...")
+    print("\n[2/5] Seeding Property & Room Service (nhatro_property_db)...")
     landlord_id = landlord.id
 
     prop1, created = Property.objects.using('property_db').get_or_create(
@@ -203,7 +219,86 @@ def seed():
             defaults=r_data
         )
 
-    print("\n✅ SEEDING COMPLETED SUCCESSFULLY FOR SPRINT 1!")
+    room_102 = Room.objects.using('property_db').get(property=prop1, room_number='102')
+    room_p201 = Room.objects.using('property_db').get(property=prop2, room_number='P.201')
+    room_301 = Room.objects.using('property_db').get(property=prop1, room_number='301')
+    Room.objects.using('property_db').filter(pk__in=[room_102.pk, room_p201.pk], current_occupants=0) \
+        .update(current_occupants=1)
+    MaintenanceRequest.objects.using('property_db').get_or_create(
+        room=room_301, title='Sơn lại tường & thay bóng đèn',
+        defaults={'description': 'Tường bong tróc, đèn chập chờn.', 'priority': 'MEDIUM',
+                  'reported_by_id': landlord_id, 'previous_room_status': RoomStatus.AVAILABLE})
+
+    # -------------------------------------------------------------
+    # 3. TENANT SERVICE (tenant_db)
+    # -------------------------------------------------------------
+    print("\n[3/5] Seeding Tenant Service (nhatro_tenant_db)...")
+    today = timezone.localdate()
+    tenant_profiles = []
+    for data in [
+        {'full_name': 'Trần Thị Mai', 'user_id': tenant.id, 'phone_number': '0912345678',
+         'identity_card': '079198003344', 'hometown': 'Tiền Giang', 'occupation': 'Sinh viên',
+         'room_id': room_102.id},
+        {'full_name': 'Lê Hoàng Nam', 'user_id': None, 'phone_number': '0987654321',
+         'identity_card': '079090112233', 'hometown': 'Đà Nẵng', 'occupation': 'Kỹ sư phần mềm',
+         'room_id': room_p201.id},
+    ]:
+        profile, created = TenantProfile.objects.using('tenant_db').get_or_create(
+            full_name=data['full_name'], landlord_id=landlord_id,
+            defaults={**data, 'status': TenantStatus.ACTIVE})
+        tenant_profiles.append(profile)
+        RentalHistory.objects.using('tenant_db').get_or_create(
+            tenant=profile, room_id=data['room_id'],
+            defaults={'move_in_date': today - timedelta(days=60)})
+        print("  [%s] Tenant profile: %s (room_id=%s)" % ('+' if created else 'ok', profile.full_name, data['room_id']))
+
+    # -------------------------------------------------------------
+    # 4. CONTRACT SERVICE (contract_db)
+    # -------------------------------------------------------------
+    print("\n[4/5] Seeding Contract Service (nhatro_contract_db)...")
+    contracts = []
+    for idx, (profile, room) in enumerate(zip(tenant_profiles, [room_102, room_p201]), start=1):
+        contract, created = Contract.objects.using('contract_db').get_or_create(
+            contract_number=f'HD-SEED-{idx:03d}',
+            defaults={'room_id': room.id, 'tenant_id': profile.id, 'landlord_id': landlord_id,
+                      'start_date': today - timedelta(days=60), 'end_date': today + timedelta(days=300),
+                      'rental_price': room.rent_price, 'deposit_amount': room.deposit_amount,
+                      'status': ContractStatus.ACTIVE})
+        if created:
+            ContractEvent.objects.using('contract_db').create(
+                contract=contract, event_type='CREATED', actor_id=landlord_id, new_end_date=contract.end_date)
+        contracts.append(contract)
+        print("  [%s] Contract %s (room_id=%s, tenant_id=%s)" % (
+            '+' if created else 'ok', contract.contract_number, contract.room_id, contract.tenant_id))
+
+    # -------------------------------------------------------------
+    # 5. BILLING & NOTIFICATION SERVICE (billing_db)
+    # -------------------------------------------------------------
+    print("\n[5/5] Seeding Billing & Notification Service (nhatro_billing_db)...")
+    for idx, (contract, room, prop) in enumerate(zip(contracts, [room_102, room_p201], [prop1, prop2]), start=1):
+        code = f'HDN-SEED-{idx:03d}'
+        if Invoice.objects.using('billing_db').filter(invoice_code=code).exists():
+            print("  [ok] Invoice %s already exists." % code)
+            continue
+        invoice = Invoice(
+            invoice_code=code, room_id=room.id, contract_id=contract.id,
+            tenant_id=contract.tenant_id, landlord_id=landlord_id,
+            billing_month=today.month, billing_year=today.year, room_fee=room.rent_price,
+            electricity_old_num=room.initial_electric_reading,
+            electricity_new_num=room.initial_electric_reading + 80, electricity_unit_price=prop.electricity_rate,
+            water_old_num=room.initial_water_reading, water_new_num=room.initial_water_reading + 5,
+            water_unit_price=prop.water_rate, other_service_cost=prop.internet_rate,
+            status=InvoiceStatus.UNPAID if idx == 1 else InvoiceStatus.PAID,
+            paid_at=None if idx == 1 else timezone.now(), due_date=today + timedelta(days=5))
+        invoice.calculate()
+        invoice.save(using='billing_db')
+        print("  [+] Invoice %s: %s VNĐ (%s)" % (invoice.invoice_code, invoice.total_amount, invoice.status))
+    Notification.objects.using('billing_db').get_or_create(
+        user_id=tenant.id, title='Hóa đơn tháng %s/%s' % (today.month, today.year),
+        defaults={'content': 'Bạn có hóa đơn HDN-SEED-001 cần thanh toán trước hạn.',
+                  'category': 'INVOICE', 'created_by_id': landlord_id})
+
+    print("\n✅ SEEDING COMPLETED SUCCESSFULLY!")
     print("=" * 60)
 
 if __name__ == '__main__':
