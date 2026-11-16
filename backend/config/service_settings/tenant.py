@@ -13,5 +13,7 @@ INSTALLED_APPS = [
 
 ROOT_URLCONF = 'services.tenant_service.service_urls'
 DATABASES = {'default': service_database(SERVICE_KEY)}
+# Service stateless: DB không có bảng auth/contenttypes (xem StatelessServiceRouter).
+DATABASE_ROUTERS = ['config.db_router.StatelessServiceRouter']
 
 SPECTACULAR_SETTINGS = spectacular_settings('Tenant Service API (:8003)', 'Hồ sơ người thuê, liên hệ, lịch sử thuê.')

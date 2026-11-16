@@ -4,6 +4,27 @@ SOA Database Router
 Mỗi service sở hữu cơ sở dữ liệu riêng, hoàn toàn độc lập, không có foreign key chéo service.
 """
 
+class StatelessServiceRouter:
+    """
+    Router cho các service 2–5 (Property, Tenant, Contract, Billing) khi chạy độc lập.
+
+    Các service này cài 'auth' và 'contenttypes' chỉ để DRF/SimpleJWT import được, còn
+    xác thực thì stateless (JWTStatelessUserAuthentication) nên DB của chúng KHÔNG có bảng
+    auth_* / django_content_type. Chặn migrate cho 2 app này để:
+      - migrate không tạo các bảng đó, và
+      - post_migrate (create_contenttypes / create_permissions) bỏ qua thay vì truy vấn
+        bảng không tồn tại (lỗi "Invalid object name 'django_content_type'").
+    Các app khác: trả về None để Django dùng mặc định.
+    """
+
+    NO_TABLE_APPS = {'auth', 'contenttypes'}
+
+    def allow_migrate(self, db, app_label, model_name=None, **hints):
+        if app_label in self.NO_TABLE_APPS:
+            return False
+        return None
+
+
 class ServiceDatabaseRouter:
     """
     Router phân tách cơ sở dữ liệu cho từng service trong hệ thống Quản lý Nhà trọ:

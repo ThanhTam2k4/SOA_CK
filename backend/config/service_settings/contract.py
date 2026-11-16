@@ -13,5 +13,7 @@ INSTALLED_APPS = [
 
 ROOT_URLCONF = 'services.contract_service.service_urls'
 DATABASES = {'default': service_database(SERVICE_KEY)}
+# Service stateless: DB không có bảng auth/contenttypes (xem StatelessServiceRouter).
+DATABASE_ROUTERS = ['config.db_router.StatelessServiceRouter']
 
 SPECTACULAR_SETTINGS = spectacular_settings('Contract Service API (:8004)', 'Hợp đồng thuê: tạo, gia hạn, kết thúc, lịch sử.')

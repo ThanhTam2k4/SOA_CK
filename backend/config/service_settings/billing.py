@@ -13,5 +13,7 @@ INSTALLED_APPS = [
 
 ROOT_URLCONF = 'services.billing_notification_service.service_urls'
 DATABASES = {'default': service_database(SERVICE_KEY)}
+# Service stateless: DB không có bảng auth/contenttypes (xem StatelessServiceRouter).
+DATABASE_ROUTERS = ['config.db_router.StatelessServiceRouter']
 
 SPECTACULAR_SETTINGS = spectacular_settings('Billing & Notification Service API (:8005)', 'Hóa đơn, công nợ, thông báo.')
