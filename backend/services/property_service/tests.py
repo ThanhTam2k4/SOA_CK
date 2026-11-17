@@ -1,7 +1,7 @@
 from unittest import mock
 
 import requests
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from rest_framework import status
 from rest_framework.test import APIClient
 
@@ -208,6 +208,7 @@ class PropertyServiceTests(TestCase):
         self.assertEqual(res.data['tenant_phone'], '0900000000')
 
     # ------------------------------------------------------------------ MAINTENANCE
+    @override_settings(SPRINT_FEATURE_LOCK=False)  # source nghiệp vụ bảo trì giữ cho Sprint sau
     def test_maintenance_workflow_and_history(self):
         res = self.client.post('/api/maintenance/', {
             'room': self.room.id, 'title': 'Phòng 101 hỏng điều hòa', 'estimated_cost': 500000,
@@ -243,6 +244,7 @@ class PropertyServiceTests(TestCase):
         res = self.client.get(f'/api/maintenance/{maint_id}/history/')
         self.assertGreaterEqual(len(res.data), 4)
 
+    @override_settings(SPRINT_FEATURE_LOCK=False)  # source nghiệp vụ bảo trì giữ cho Sprint sau
     def test_maintenance_start_complete_restores_previous_status(self):
         self.room.status = RoomStatus.OCCUPIED
         self.room.current_occupants = 1
@@ -259,6 +261,7 @@ class PropertyServiceTests(TestCase):
         self.room.refresh_from_db()
         self.assertEqual(self.room.status, RoomStatus.OCCUPIED)
 
+    @override_settings(SPRINT_FEATURE_LOCK=False)  # source nghiệp vụ bảo trì giữ cho Sprint sau
     def test_create_maintenance_without_locking_room(self):
         res = self.client.post('/api/maintenance/', {
             'room': self.room.id, 'title': 'Thay bóng đèn', 'set_room_maintenance': False}, format='json')
@@ -266,6 +269,7 @@ class PropertyServiceTests(TestCase):
         self.room.refresh_from_db()
         self.assertEqual(self.room.status, RoomStatus.AVAILABLE)
 
+    @override_settings(SPRINT_FEATURE_LOCK=False)  # source nghiệp vụ bảo trì giữ cho Sprint sau
     def test_tenant_can_report_but_not_manage_maintenance(self):
         patcher = patch_tenant_links({777: [tenant_link(1, 777, room_id=self.room.id, landlord_id=LANDLORD_ID)]})
         patcher.start()
@@ -285,6 +289,7 @@ class PropertyServiceTests(TestCase):
         res = tenant.post(f'/api/maintenance/{req_id}/cancel/')
         self.assertEqual(res.status_code, status.HTTP_200_OK)
 
+    @override_settings(SPRINT_FEATURE_LOCK=False)  # source nghiệp vụ bảo trì giữ cho Sprint sau
     def test_landlord_cannot_see_other_landlord_maintenance(self):
         other = Property.objects.create(owner_id=999, name='Khác', address='Z')
         other_room = Room.objects.create(property=other, room_number='1', rent_price=1)
@@ -425,3 +430,59 @@ class PropertyRoleScopeTests(TestCase):
             self.assertEqual(tenant.get('/api/rooms/').status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
         with mock.patch('common.service_client.requests.get', return_value=fake_http_response(200, {'bad': 1})):
             self.assertEqual(tenant.get('/api/properties/').status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+
+
+
+class MaintenanceSprintLockTests(TestCase):
+    """D2: API ghi nghiệp vụ bảo trì bị khóa ở backend; GET vẫn hoạt động theo phạm vi."""
+
+    def setUp(self):
+        self.prop = Property.objects.create(code='PM', owner_id=LANDLORD_ID, name='Nhà M', address='M')
+        self.room = Room.objects.create(code='PM-1', property=self.prop, room_number='1', rent_price=1,
+                                        status=RoomStatus.AVAILABLE)
+        self.req = MaintenanceRequest.objects.create(room=self.room, title='Hỏng đèn', reported_by_id=555)
+
+    def test_write_endpoints_locked_for_every_role(self):
+        landlord, admin = jwt_client(LANDLORD_ID, 'LANDLORD'), jwt_client(1, 'ADMIN')
+        tenant = jwt_client(555, 'TENANT')
+        rid = self.req.id
+        calls = [
+            ('post', '/api/maintenance/', {'room': self.room.id, 'title': 'x'}),
+            ('patch', f'/api/maintenance/{rid}/', {'title': 'y'}),
+            ('put', f'/api/maintenance/{rid}/', {'room': self.room.id, 'title': 'y'}),
+            ('delete', f'/api/maintenance/{rid}/', None),
+            ('post', f'/api/maintenance/{rid}/update_status/', {'status': 'IN_PROGRESS'}),
+            ('post', f'/api/maintenance/{rid}/start/', {}),
+            ('post', f'/api/maintenance/{rid}/record_cost/', {'actual_cost': '1'}),
+            ('post', f'/api/maintenance/{rid}/complete/', {}),
+            ('post', f'/api/maintenance/{rid}/cancel/', {}),
+        ]
+        with patch_tenant_links({555: [tenant_link(1, 555, room_id=self.room.id, landlord_id=LANDLORD_ID)]}):
+            for client in (landlord, admin, tenant):
+                for method, url, data in calls:
+                    res = getattr(client, method)(url, data, format='json')
+                    self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN, (method, url))
+        self.req.refresh_from_db()
+        self.assertEqual(self.req.status, MaintenanceStatus.PENDING)
+        self.assertEqual(MaintenanceRequest.objects.count(), 1)
+        self.room.refresh_from_db()
+        self.assertEqual(self.room.status, RoomStatus.AVAILABLE)
+        self.assertEqual(APIClient().post('/api/maintenance/', {}, format='json').status_code,
+                         status.HTTP_401_UNAUTHORIZED)
+
+    def test_read_endpoints_still_work_and_are_scoped(self):
+        landlord = jwt_client(LANDLORD_ID, 'LANDLORD')
+        self.assertEqual(len(landlord.get('/api/maintenance/').data), 1)
+        self.assertEqual(landlord.get(f'/api/maintenance/{self.req.id}/').status_code, status.HTTP_200_OK)
+        self.assertEqual(landlord.get(f'/api/maintenance/{self.req.id}/history/').status_code, status.HTTP_200_OK)
+        self.assertEqual(landlord.get('/api/maintenance-history/').status_code, status.HTTP_200_OK)
+        other = jwt_client(999, 'LANDLORD')
+        self.assertEqual(other.get(f'/api/maintenance/{self.req.id}/').status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(len(jwt_client(555, 'TENANT').get('/api/maintenance/').data), 1)
+        self.assertEqual(len(jwt_client(556, 'TENANT').get('/api/maintenance/').data), 0)
+
+    def test_room_status_management_is_not_locked(self):
+        # Quản lý trạng thái phòng là chức năng Sprint 1 — không bị khóa cùng bảo trì.
+        res = jwt_client(LANDLORD_ID, 'LANDLORD').patch(f'/api/rooms/{self.room.id}/status/',
+                                                        {'status': 'MAINTENANCE'}, format='json')
+        self.assertEqual(res.status_code, status.HTTP_200_OK, res.data)

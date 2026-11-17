@@ -11,6 +11,7 @@ from common.auth import (
     IsManagerOrReadOnly, IsManagerRole, get_user_id, is_admin, is_landlord, is_manager,
 )
 from common.service_client import own_rented_room_ids
+from common.sprint import SprintFeatureLock
 from .models import (
     RENTED_STATUSES,
     MaintenanceHistory,
@@ -575,15 +576,20 @@ class MaintenanceRequestViewSet(viewsets.ModelViewSet):
     7.7 Hoàn thành bảo trì (POST /maintenance/{id}/complete/) — quản lý
     7.8 Xem lịch sử bảo trì (GET /maintenance/{id}/history/ & /maintenance-history/)
     Phạm vi dữ liệu: ADMIN toàn bộ; LANDLORD nhà trọ của mình; TENANT yêu cầu do mình báo.
+
+    Tạm khóa (quyết định D2 — quy trình bảo trì thuộc Sprint sau, source code giữ nguyên):
+    mọi API GHI (7.1, 7.4–7.7, /start/, /cancel/). Chỉ còn GET danh sách / chi tiết / lịch sử.
     """
     serializer_class = MaintenanceRequestSerializer
     permission_classes = [permissions.IsAuthenticated]
     MANAGER_ACTIONS = ('update', 'partial_update', 'destroy', 'update_status', 'record_cost', 'start', 'complete')
+    sprint_locked_actions = ('create', 'update', 'partial_update', 'destroy', 'update_status', 'record_cost',
+                             'start', 'complete', 'cancel')
 
     def get_permissions(self):
         if self.action in self.MANAGER_ACTIONS:
-            return [permissions.IsAuthenticated(), IsManagerRole()]
-        return super().get_permissions()
+            return [permissions.IsAuthenticated(), IsManagerRole(), SprintFeatureLock()]
+        return [permissions.IsAuthenticated(), SprintFeatureLock()]
 
     def get_queryset(self):
         queryset = scoped_maintenance(self.request.user).prefetch_related('histories')
