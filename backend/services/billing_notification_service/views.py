@@ -74,7 +74,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
     @transaction.atomic
     def perform_create(self, serializer):
         notify_user_id = serializer.validated_data.pop('notify_user_id', None)
-        code = serializer.validated_data.get('invoice_code') or \
+        code = serializer.validated_data.pop('invoice_code', None) or \
             f"HDN{timezone.now():%Y%m}-{get_random_string(6, '0123456789ABCDEFGHJKLMNPQRSTUVWXYZ')}"
         invoice = Invoice(**serializer.validated_data, invoice_code=code, landlord_id=get_user_id(self.request.user))
         invoice.calculate()

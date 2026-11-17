@@ -80,8 +80,15 @@ class AppTable<T> extends StatelessWidget {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final effectiveWidth =
-            constraints.maxWidth < minWidth ? minWidth : constraints.maxWidth;
+        final colsMinWidth = columns.fold<double>(
+          40.0,
+          (sum, col) => sum + (col.width ?? col.flex * 110.0),
+        );
+        final targetMinWidth =
+            colsMinWidth > minWidth ? colsMinWidth : minWidth;
+        final effectiveWidth = constraints.maxWidth < targetMinWidth
+            ? targetMinWidth
+            : constraints.maxWidth;
 
         return SingleChildScrollView(
           scrollDirection: Axis.horizontal,

@@ -1,3 +1,4 @@
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 
@@ -187,6 +188,137 @@ def dashboard_summary(request):
         'complete': not errors,
         'generated_at': timezone.now().isoformat(),
     }, json_dumps_params={'ensure_ascii': False})
+
+
+# ==============================================================================
+# 4. SERVICE ENDPOINT CATALOG (chỉ đọc, phục vụ Dashboard)
+# ==============================================================================
+# Danh sách endpoint KHÔNG nhập tay: đọc OpenAPI mà chính service sinh ra từ URL routing
+# thật (drf-spectacular, GET <service>/api/schema/). Backend đổi route -> danh sách tự đổi theo.
+HTTP_METHODS = ('get', 'post', 'put', 'patch', 'delete')
+SCHEMA_PATH = '/api/schema/?format=json'
+_CRUD_TEXT = {
+    ('collection', 'GET'): 'Danh sách',
+    ('collection', 'POST'): 'Tạo mới',
+    ('detail', 'GET'): 'Xem chi tiết',
+    ('detail', 'PUT'): 'Cập nhật toàn bộ',
+    ('detail', 'PATCH'): 'Cập nhật một phần',
+    ('detail', 'DELETE'): 'Xóa',
+}
+
+
+# Dòng docstring liệt kê action, vd. "- GET/POST /{id}/history/  lịch sử thuê".
+_DOC_LINE = re.compile(
+    r'^-?\s*((?:GET|POST|PUT|PATCH|DELETE)(?:\s*/\s*(?:GET|POST|PUT|PATCH|DELETE))*)\s+(/\S*)\s+(.+)$')
+_SERVICE_TAG = re.compile(r'^SERVICE\s+\d+\s+—\s+[^:]+:\s*')
+
+
+def _first_line(text):
+    line = next((line.strip() for line in (text or '').splitlines() if line.strip()), '')
+    return _SERVICE_TAG.sub('', line)
+
+
+def _describe(path, method, description, shared, kind):
+    """
+    Mô tả lấy từ docstring của view trong source code:
+      - docstring riêng của view/action (không dùng chung với path khác) -> dòng đầu của nó;
+      - docstring chung của ViewSet -> dòng liệt kê đúng method + action đó;
+      - endpoint CRUD chuẩn của router -> tên thao tác CRUD.
+    """
+    if description and not shared:
+        return _first_line(description)
+    for line in (description or '').splitlines():
+        m = _DOC_LINE.match(line.strip())
+        if m and method in {x.strip() for x in m.group(1).split('/')} and path.endswith(m.group(2)):
+            return m.group(3).strip()
+    if kind in ('collection', 'detail'):
+        return _CRUD_TEXT.get((kind, method), _first_line(description))
+    action = [s for s in path.strip('/').split('/') if not s.startswith('{')][-1]
+    return f'Thao tác "{action}"'
+
+
+def _path_kind(path, all_paths):
+    """detail: /x/{id}/ — collection: /x/ có /x/{id}/ đi kèm (router) — còn lại: action / view riêng."""
+    if re.search(r'/\{[^/]+\}/$', path):
+        return 'detail'
+    if any(re.fullmatch(re.escape(path) + r'\{[^/]+\}/', p) for p in all_paths):
+        return 'collection'
+    return 'action'
+
+
+def parse_openapi_endpoints(schema, base_url, prefixes):
+    """OpenAPI 3 -> [{group, method, path, full_url, description, operation_id}] theo thứ tự route."""
+    operations = []
+    for path, item in (schema.get('paths') or {}).items():
+        for method in HTTP_METHODS:
+            op = item.get(method) if isinstance(item, dict) else None
+            if isinstance(op, dict):
+                operations.append((path, method.upper(), op))
+    # Docstring xuất hiện ở NHIỀU path khác nhau = docstring chung của ViewSet.
+    paths_by_description = {}
+    for path, _method, op in operations:
+        paths_by_description.setdefault((op.get('description') or '').strip(), set()).add(path)
+    all_paths = {path for path, _m, _o in operations}
+
+    endpoints = []
+    for path, method, op in operations:
+        description = (op.get('description') or op.get('summary') or '').strip()
+        segments = path.strip('/').split('/')
+        group = segments[1] if len(segments) > 1 and segments[0] == 'api' else segments[0]
+        # Prefix nhiều cấp (vd. /api/billing/invoices/) vẫn thuộc prefix 'billing' của registry.
+        if group not in prefixes and group != 'health':
+            group = next((p for p in prefixes if path.startswith(f'/api/{p}/')), group)
+        endpoints.append({
+            'group': group,
+            'method': method,
+            'path': path,
+            'full_url': f"{base_url.rstrip('/')}{path}",
+            'description': _describe(path, method, description,
+                                     len(paths_by_description.get(description, ())) > 1,
+                                     _path_kind(path, all_paths)),
+            'operation_id': op.get('operationId', ''),
+        })
+    return endpoints
+
+
+def service_endpoints(request, key):
+    """
+    GET /api/system/services/<key>/endpoints/
+    Thông tin kết nối + danh sách endpoint THỰC TẾ của 1 service (đọc OpenAPI của service đó).
+    Service không phản hồi -> 200 với status DOWN, endpoints rỗng và lý do (như /api/system/health/).
+    """
+    conf = services().get(key)
+    if conf is None:
+        return _error(404, f'Không có service "{key}".', available=list(services()))
+    base_url = conf['url'].rstrip('/')
+    info = {
+        'key': key,
+        'name': conf['name'],
+        'port': conf['port'],
+        'base_url': base_url,
+        'prefixes': conf['prefixes'],
+        'source': f'{base_url}/api/schema/',
+        'checked_at': timezone.now().isoformat(),
+    }
+    try:
+        resp = client.get_json(f'{base_url}{SCHEMA_PATH}', headers={'Accept': 'application/json'})
+    except requests.exceptions.Timeout:
+        return JsonResponse({**info, 'status': 'DOWN', 'endpoints': [], 'error': 'Timeout khi đọc API schema.'},
+                            json_dumps_params={'ensure_ascii': False})
+    except requests.exceptions.ConnectionError:
+        return JsonResponse({**info, 'status': 'DOWN', 'endpoints': [], 'error': 'Không kết nối được tới service.'},
+                            json_dumps_params={'ensure_ascii': False})
+    try:
+        schema = resp.json() if resp.status_code == 200 else None
+    except ValueError:
+        schema = None
+    if not isinstance(schema, dict) or not isinstance(schema.get('paths'), dict):
+        return JsonResponse({**info, 'status': 'UNKNOWN', 'endpoints': [],
+                             'error': f'Không đọc được API schema (HTTP {resp.status_code}).'},
+                            json_dumps_params={'ensure_ascii': False})
+    endpoints = parse_openapi_endpoints(schema, base_url, conf['prefixes'])
+    return JsonResponse({**info, 'status': 'UP', 'count': len(endpoints), 'endpoints': endpoints},
+                        json_dumps_params={'ensure_ascii': False})
 
 
 def index(request):

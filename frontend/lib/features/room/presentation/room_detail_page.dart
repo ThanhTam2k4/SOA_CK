@@ -6,7 +6,9 @@ import '../../../core/constants/app_spacing.dart';
 import '../../../core/theme/app_typography.dart';
 import '../../../core/utils/formatters.dart';
 import '../../../core/widgets/app_button.dart';
+import '../../../core/widgets/app_select.dart';
 import '../../../core/widgets/app_table.dart';
+import '../../../core/widgets/app_text_field.dart';
 import '../../../core/widgets/page_header.dart';
 import '../../../core/widgets/state_views.dart';
 import '../../../core/widgets/status_badge.dart';
@@ -17,6 +19,288 @@ class RoomDetailPage extends StatelessWidget {
   final String roomId;
 
   const RoomDetailPage({super.key, required this.roomId});
+
+  Future<void> _showRentabilityDialog(
+    BuildContext context,
+    AppDataRepository repo,
+    RoomItem room,
+  ) async {
+    try {
+      final res = await repo.checkRoomRentable(room);
+      if (!context.mounted) return;
+      final canRent = res['can_rent'] == true;
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Row(
+            children: [
+              CodeBadge('${res['code'] ?? room.code}'),
+              const SizedBox(width: AppSpacing.sm),
+              const Expanded(
+                child: Text(
+                  'Kiểm tra khả năng cho thuê',
+                  style: AppTypography.sectionTitle,
+                ),
+              ),
+            ],
+          ),
+          content: SizedBox(
+            width: 460,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(AppSpacing.md),
+                  decoration: BoxDecoration(
+                    color: canRent ? AppColors.successLight : AppColors.errorLight,
+                    borderRadius: BorderRadius.circular(AppSpacing.badgeRadius),
+                    border: Border.all(
+                      color: canRent ? AppColors.successBorder : AppColors.errorBorder,
+                    ),
+                  ),
+                  child: Text(
+                    canRent
+                        ? 'PHÒNG CÓ THỂ CHO THUÊ NGAY'
+                        : 'PHÒNG HIỆN KHÔNG THỂ CHO THUÊ',
+                    style: AppTypography.bodyBold.copyWith(
+                      color: canRent ? AppColors.successText : AppColors.errorText,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.md),
+                Text('Lý do: ${res['reason'] ?? ''}', style: AppTypography.bodyMd),
+                const SizedBox(height: AppSpacing.xs),
+                Text(
+                  'Số người: ${res['current_occupants'] ?? room.currentOccupants}/${res['max_occupants'] ?? room.maxOccupants} · Giá: ${AppFormatters.currency(room.rentPrice)}/tháng',
+                  style: AppTypography.caption,
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            AppButton(
+              label: 'Đóng',
+              variant: AppButtonVariant.outlined,
+              onPressed: () => Navigator.pop(ctx),
+            ),
+          ],
+        ),
+      );
+    } catch (e) {
+      if (context.mounted) showErrorToast(context, e.toString());
+    }
+  }
+
+  void _openStatusDialog(
+    BuildContext context,
+    AppDataRepository repo,
+    RoomItem room,
+  ) {
+    String selectedStatus = room.status;
+    final occCtrl = TextEditingController(text: '${room.currentOccupants}');
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setModalState) => AlertDialog(
+          title: Text(
+            'Đổi trạng thái ${room.name}',
+            style: AppTypography.sectionTitle,
+          ),
+          content: SizedBox(
+            width: 420,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                AppSelect<String>(
+                  label: 'Trạng thái mới',
+                  width: null,
+                  value: selectedStatus,
+                  options: const [
+                    AppSelectOption(value: 'AVAILABLE', label: 'AVAILABLE — Phòng trống'),
+                    AppSelectOption(value: 'OCCUPIED', label: 'OCCUPIED — Đang thuê'),
+                    AppSelectOption(value: 'FULL', label: 'FULL — Đã đủ người'),
+                    AppSelectOption(value: 'RESERVED', label: 'RESERVED — Đã đặt trước'),
+                    AppSelectOption(value: 'MAINTENANCE', label: 'MAINTENANCE — Đang bảo trì'),
+                    AppSelectOption(value: 'INACTIVE', label: 'INACTIVE — Ngừng hoạt động'),
+                  ],
+                  onChanged: (v) => setModalState(() => selectedStatus = v ?? room.status),
+                ),
+                const SizedBox(height: AppSpacing.md),
+                AppTextField(
+                  label: 'Số người đang ở',
+                  controller: occCtrl,
+                  isNumber: true,
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            AppButton(
+              label: 'Hủy',
+              variant: AppButtonVariant.outlined,
+              onPressed: () => Navigator.pop(ctx),
+            ),
+            AppButton(
+              label: 'Cập nhật trạng thái',
+              onPressed: () async {
+                final occ = int.tryParse(occCtrl.text.trim());
+                final err = await repo.updateRoomStatus(
+                  room.id,
+                  selectedStatus,
+                  currentOccupants: occ,
+                );
+                if (!ctx.mounted || !context.mounted) return;
+                if (err != null) {
+                  showErrorToast(context, err);
+                  return;
+                }
+                Navigator.pop(ctx);
+                showSuccessToast(context, 'Đã cập nhật trạng thái phòng ${room.name}.');
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _openEditRoomDialog(
+    BuildContext context,
+    AppDataRepository repo,
+    RoomItem room,
+  ) {
+    final formKey = GlobalKey<FormState>();
+    final codeCtrl = TextEditingController(text: room.code);
+    final nameCtrl = TextEditingController(text: room.name);
+    final floorCtrl = TextEditingController(text: '${room.floor}');
+    final priceCtrl = TextEditingController(text: '${room.rentPrice.toInt()}');
+    final areaCtrl = TextEditingController(text: '${room.area.toInt()}');
+    final maxCtrl = TextEditingController(text: '${room.maxOccupants}');
+    final descCtrl = TextEditingController(text: room.description);
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Chỉnh sửa ${room.name}', style: AppTypography.sectionTitle),
+        content: SizedBox(
+          width: 500,
+          child: Form(
+            key: formKey,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: AppTextField(
+                          label: 'Mã phòng',
+                          controller: codeCtrl,
+                          requiredField: true,
+                        ),
+                      ),
+                      const SizedBox(width: AppSpacing.md),
+                      Expanded(
+                        child: AppTextField(
+                          label: 'Tên phòng',
+                          controller: nameCtrl,
+                          requiredField: true,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: AppSpacing.md),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: AppTextField(
+                          label: 'Tầng',
+                          controller: floorCtrl,
+                          requiredField: true,
+                          isNumber: true,
+                        ),
+                      ),
+                      const SizedBox(width: AppSpacing.md),
+                      Expanded(
+                        child: AppTextField(
+                          label: 'Giá thuê (VNĐ)',
+                          controller: priceCtrl,
+                          requiredField: true,
+                          isNumber: true,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: AppSpacing.md),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: AppTextField(
+                          label: 'Diện tích (m²)',
+                          controller: areaCtrl,
+                          requiredField: true,
+                          isNumber: true,
+                        ),
+                      ),
+                      const SizedBox(width: AppSpacing.md),
+                      Expanded(
+                        child: AppTextField(
+                          label: 'Số người tối đa',
+                          controller: maxCtrl,
+                          requiredField: true,
+                          isNumber: true,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: AppSpacing.md),
+                  AppTextField(
+                    label: 'Mô tả',
+                    controller: descCtrl,
+                    maxLines: 3,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        actions: [
+          AppButton(
+            label: 'Hủy',
+            variant: AppButtonVariant.outlined,
+            onPressed: () => Navigator.pop(ctx),
+          ),
+          AppButton(
+            label: 'Lưu thay đổi',
+            onPressed: () async {
+              if (!(formKey.currentState?.validate() ?? false)) return;
+              final err = await repo.updateRoom(
+                room.copyWith(
+                  code: codeCtrl.text.trim(),
+                  name: nameCtrl.text.trim(),
+                  floor: int.tryParse(floorCtrl.text.trim()) ?? room.floor,
+                  rentPrice: double.tryParse(priceCtrl.text.trim()) ?? room.rentPrice,
+                  area: double.tryParse(areaCtrl.text.trim()) ?? room.area,
+                  maxOccupants: int.tryParse(maxCtrl.text.trim()) ?? room.maxOccupants,
+                  description: descCtrl.text.trim(),
+                ),
+              );
+              if (!ctx.mounted || !context.mounted) return;
+              if (err != null) {
+                showErrorToast(context, err);
+                return;
+              }
+              Navigator.pop(ctx);
+              showSuccessToast(context, 'Đã cập nhật thông tin phòng ${nameCtrl.text.trim()}.');
+            },
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -34,12 +318,56 @@ class RoomDetailPage extends StatelessWidget {
     }
 
     if (room == null) {
+      // Chỉ kết luận "không tìm thấy" khi danh sách phòng đã tải thành công (P4).
+      final roomState = repo.sectionState(DataSection.rooms);
+      final Widget body;
+      final String subtitle;
+      if (roomState.isForbidden) {
+        subtitle = 'Không có quyền xem thông tin phòng.';
+        body = const EmptyState(
+          key: Key('room_detail_forbidden'),
+          icon: Icons.lock_outline_rounded,
+          title: 'Không có quyền xem phòng này',
+          subtitle: 'Tài khoản của bạn không được cấp quyền truy cập danh sách phòng.',
+        );
+      } else if (roomState.isError) {
+        subtitle = 'Không tải được thông tin phòng.';
+        body = ErrorState(
+          key: const Key('room_detail_error'),
+          message: 'Không tải được danh sách phòng: ${roomState.message ?? 'lỗi không xác định'}',
+          onRetry: repo.syncWithBackend,
+        );
+      } else if (roomState.isLoading || (repo.isSyncing && !roomState.isLoaded)) {
+        subtitle = 'Đang tải thông tin phòng...';
+        body = const LoadingState(
+          key: Key('room_detail_loading'),
+          message: 'Đang tải thông tin phòng...',
+        );
+      } else if (!roomState.isLoaded) {
+        subtitle = 'Chưa tải được thông tin phòng.';
+        body = ErrorState(
+          key: const Key('room_detail_not_loaded'),
+          message: repo.lastSyncError ?? 'Chưa tải được danh sách phòng.',
+          onRetry: repo.syncWithBackend,
+        );
+      } else {
+        subtitle = 'Không tìm thấy thông tin phòng theo mã định danh.';
+        body = EmptyState(
+          key: const Key('room_detail_not_found'),
+            icon: Icons.door_front_door_outlined,
+            title: 'Không tìm thấy phòng',
+            subtitle:
+                'Phòng với mã "$roomId" không tồn tại trong dữ liệu hiện tại.',
+            actionLabel: 'Quay lại Quản lý phòng',
+            onAction: () => context.go('/rooms'),
+        );
+      }
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           PageHeader(
             title: 'Chi tiết phòng',
-            subtitle: 'Không tìm thấy thông tin phòng theo mã định danh.',
+            subtitle: subtitle,
             actions: [
               AppButton(
                 label: 'Quay lại danh sách',
@@ -49,14 +377,7 @@ class RoomDetailPage extends StatelessWidget {
               ),
             ],
           ),
-          EmptyState(
-            icon: Icons.door_front_door_outlined,
-            title: 'Không tìm thấy phòng',
-            subtitle:
-                'Phòng với mã "$roomId" không tồn tại trong dữ liệu hiện tại.',
-            actionLabel: 'Quay lại Quản lý phòng',
-            onAction: () => context.go('/rooms'),
-          ),
+          body,
         ],
       );
     }
@@ -66,12 +387,27 @@ class RoomDetailPage extends StatelessWidget {
         : 0.0;
     final occupancyPercent = (occupancyRatio * 100).round();
 
+    // Ghép theo room_id thật của Contract Service; chỉ so tên khi hợp đồng không có room_id.
     final relatedContracts = repo.contracts
         .where(
-          (c) =>
-              c.roomName == room!.name && c.propertyName == room.propertyName,
+          (c) => c.roomId != null
+              ? c.roomId == room!.id
+              : c.roomName == room!.name && c.propertyName == room.propertyName,
         )
         .toList();
+    final contractState = repo.sectionState(DataSection.contracts);
+    final String noContractText;
+    if (contractState.isForbidden) {
+      noContractText = 'Tài khoản của bạn không có quyền xem hợp đồng.';
+    } else if (contractState.isError) {
+      noContractText = 'Không tải được danh sách hợp đồng: ${contractState.message ?? 'lỗi không xác định'}';
+    } else if (contractState.isLoading || (repo.isSyncing && !contractState.isLoaded)) {
+      noContractText = 'Đang tải danh sách hợp đồng...';
+    } else if (!contractState.isLoaded) {
+      noContractText = 'Chưa tải được danh sách hợp đồng.';
+    } else {
+      noContractText = 'Hiện chưa có hợp đồng nào gắn với phòng này.';
+    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -88,12 +424,21 @@ class RoomDetailPage extends StatelessWidget {
               onPressed: () => context.go('/rooms'),
             ),
             AppButton(
+              label: 'Kiểm tra cho thuê',
+              icon: Icons.fact_check_outlined,
+              variant: AppButtonVariant.outlined,
+              onPressed: () => _showRentabilityDialog(context, repo, room!),
+            ),
+            AppButton(
+              label: 'Đổi trạng thái',
+              icon: Icons.swap_horiz_rounded,
+              variant: AppButtonVariant.outlined,
+              onPressed: () => _openStatusDialog(context, repo, room!),
+            ),
+            AppButton(
               label: 'Chỉnh sửa',
               icon: Icons.edit_outlined,
-              onPressed: () => showSuccessToast(
-                context,
-                'Chức năng chỉnh sửa đang ở chế độ UI-only (chưa kết nối Django backend).',
-              ),
+              onPressed: () => _openEditRoomDialog(context, repo, room!),
             ),
           ],
         ),
@@ -240,7 +585,7 @@ class RoomDetailPage extends StatelessWidget {
 
         const SizedBox(height: AppSpacing.lg),
 
-        // Related Contracts from Mock Repository
+        // Hợp đồng liên quan: lấy từ Contract Service (qua Gateway) trong repository
         AppSurfaceCard(
           padding: EdgeInsets.zero,
           child: Column(
@@ -257,7 +602,7 @@ class RoomDetailPage extends StatelessWidget {
                     ),
                     SizedBox(height: AppSpacing.xxs),
                     Text(
-                      'Danh sách hợp đồng thuê gắn với phòng này (dữ liệu mẫu)',
+                      'Danh sách hợp đồng thuê gắn với phòng này',
                       style: AppTypography.caption,
                     ),
                   ],
@@ -265,10 +610,11 @@ class RoomDetailPage extends StatelessWidget {
               ),
               const Divider(height: 1),
               if (relatedContracts.isEmpty)
-                const Padding(
-                  padding: EdgeInsets.all(AppSpacing.xl),
+                Padding(
+                  padding: const EdgeInsets.all(AppSpacing.xl),
                   child: Text(
-                    'Hiện chưa có hợp đồng nào gắn với phòng này.',
+                    noContractText,
+                    key: const Key('room_detail_contracts_status'),
                     style: AppTypography.caption,
                   ),
                 )

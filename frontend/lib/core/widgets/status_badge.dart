@@ -27,7 +27,8 @@ class StatusBadge extends StatelessWidget {
   factory StatusBadge.fromRoomStatus(String status) {
     return switch (status) {
       'AVAILABLE' => const StatusBadge(label: 'Còn trống', type: BadgeType.success),
-      'OCCUPIED' || 'FULL' => const StatusBadge(label: 'Đang thuê', type: BadgeType.error),
+      'OCCUPIED' => const StatusBadge(label: 'Đang thuê', type: BadgeType.error),
+      'FULL' => const StatusBadge(label: 'Đã đủ người', type: BadgeType.reserved),
       'RESERVED' => const StatusBadge(label: 'Đã đặt trước', type: BadgeType.reserved),
       'MAINTENANCE' => const StatusBadge(label: 'Đang bảo trì', type: BadgeType.warning),
       _ => const StatusBadge(label: 'Ngừng hoạt động', type: BadgeType.neutral),
@@ -44,9 +45,12 @@ class StatusBadge extends StatelessWidget {
 
   factory StatusBadge.fromContractStatus(String status) {
     return switch (status) {
+      'DRAFT' => const StatusBadge(label: 'Bản nháp', type: BadgeType.info),
       'ACTIVE' => const StatusBadge(label: 'Đang hiệu lực', type: BadgeType.success),
+      'EXTENDED' => const StatusBadge(label: 'Đã gia hạn', type: BadgeType.success),
       'EXPIRING' => const StatusBadge(label: 'Sắp hết hạn', type: BadgeType.warning),
       'EXPIRED' => const StatusBadge(label: 'Đã hết hạn', type: BadgeType.error),
+      'TERMINATED' => const StatusBadge(label: 'Đã thanh lý', type: BadgeType.neutral),
       _ => const StatusBadge(label: 'Đã hủy', type: BadgeType.neutral),
     };
   }
@@ -55,6 +59,7 @@ class StatusBadge extends StatelessWidget {
     return switch (status) {
       'PAID' => const StatusBadge(label: 'Đã thanh toán', type: BadgeType.success),
       'UNPAID' => const StatusBadge(label: 'Chưa thanh toán', type: BadgeType.warning),
+      'CANCELLED' => const StatusBadge(label: 'Đã hủy', type: BadgeType.neutral),
       _ => const StatusBadge(label: 'Quá hạn', type: BadgeType.error),
     };
   }

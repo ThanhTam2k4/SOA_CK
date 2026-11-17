@@ -97,3 +97,65 @@ class SystemHealth {
 
   int get upCount => services.where((s) => s.status == ServiceStatus.up).length;
 }
+
+/// 1 endpoint thực tế của service: `GET /api/system/services/<key>/endpoints/`
+class ServiceEndpoint {
+  final String group;
+  final String method;
+  final String path;
+  final String fullUrl;
+  final String description;
+
+  const ServiceEndpoint({
+    required this.group,
+    required this.method,
+    required this.path,
+    required this.fullUrl,
+    required this.description,
+  });
+
+  factory ServiceEndpoint.fromJson(Map<String, dynamic> json) => ServiceEndpoint(
+        group: '${json['group'] ?? ''}',
+        method: '${json['method'] ?? ''}'.toUpperCase(),
+        path: '${json['path'] ?? ''}',
+        fullUrl: '${json['full_url'] ?? ''}',
+        description: '${json['description'] ?? ''}',
+      );
+}
+
+/// Thông tin kết nối + danh sách endpoint của 1 service (Gateway đọc từ OpenAPI của service).
+class ServiceEndpointCatalog {
+  final String key;
+  final String name;
+  final int port;
+  final String baseUrl;
+  final ServiceStatus status;
+  final String? source;
+  final String? error;
+  final List<ServiceEndpoint> endpoints;
+
+  const ServiceEndpointCatalog({
+    required this.key,
+    required this.name,
+    required this.port,
+    required this.baseUrl,
+    required this.status,
+    required this.endpoints,
+    this.source,
+    this.error,
+  });
+
+  factory ServiceEndpointCatalog.fromJson(Map<String, dynamic> json) => ServiceEndpointCatalog(
+        key: '${json['key'] ?? ''}',
+        name: '${json['name'] ?? json['key'] ?? 'Service'}',
+        port: (json['port'] as num?)?.toInt() ?? 0,
+        baseUrl: '${json['base_url'] ?? ''}',
+        status: parseServiceStatus(json['status']),
+        source: json['source']?.toString(),
+        error: json['error']?.toString(),
+        endpoints: ((json['endpoints'] as List?) ?? const [])
+            .whereType<Map>()
+            .map((e) => ServiceEndpoint.fromJson(Map<String, dynamic>.from(e)))
+            .toList(),
+      );
+}

@@ -9,11 +9,15 @@ class SoaArchitectureCard extends StatelessWidget {
   final bool isLoading;
   final VoidCallback? onRefresh;
 
+  /// Nhấn vào 1 service -> mở thông tin kết nối & API endpoint của service đó.
+  final void Function(String key, String name, int port, ServiceStatus status)? onServiceTap;
+
   const SoaArchitectureCard({
     super.key,
     required this.health,
     required this.isLoading,
     this.onRefresh,
+    this.onServiceTap,
   });
 
   /// Danh sách service hiển thị cố định về TÊN/PORT (thông tin kiến trúc);
@@ -101,12 +105,16 @@ class SoaArchitectureCard extends StatelessWidget {
           ),
           ..._layout.map((item) {
             final s = h?.service(item.$1);
+            final port = s?.port ?? item.$3;
+            // Gateway không trả về service này (hoặc Gateway down) -> UNKNOWN.
+            final status = s?.status ?? ServiceStatus.unknown;
             return _ServiceTile(
+              key: Key('soa_service_${item.$1}'),
               name: item.$2,
-              port: s?.port ?? item.$3,
+              port: port,
               icon: item.$4,
-              // Gateway không trả về service này (hoặc Gateway down) -> UNKNOWN.
-              status: s?.status ?? ServiceStatus.unknown,
+              status: status,
+              onTap: onServiceTap == null ? null : () => onServiceTap!(item.$1, item.$2, port, status),
               detail: s == null
                   ? null
                   : s.status == ServiceStatus.up
@@ -171,20 +179,22 @@ class _ServiceTile extends StatelessWidget {
   final IconData icon;
   final ServiceStatus status;
   final String? detail;
+  final VoidCallback? onTap;
 
   const _ServiceTile({
+    super.key,
     required this.name,
     required this.port,
     required this.icon,
     required this.status,
     this.detail,
+    this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
     final color = SoaArchitectureCard.statusColor(status);
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
+    final tile = Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
         color: const Color(0xFFF8FAFC),
@@ -220,8 +230,21 @@ class _ServiceTile extends StatelessWidget {
             SoaArchitectureCard.statusLabel(status),
             style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: color),
           ),
+          if (onTap != null) ...[
+            const SizedBox(width: 4),
+            const Icon(Icons.chevron_right_rounded, size: 18, color: Color(0xFF94A3B8)),
+          ],
         ],
       ),
+    );
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: onTap == null
+          ? tile
+          : Tooltip(
+              message: 'Xem URL và API endpoint của $name',
+              child: InkWell(borderRadius: BorderRadius.circular(12), onTap: onTap, child: tile),
+            ),
     );
   }
 }

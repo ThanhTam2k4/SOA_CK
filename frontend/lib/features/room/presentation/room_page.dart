@@ -31,6 +31,7 @@ class _RoomPageState extends State<RoomPage> {
   String _propertyFilter = 'ALL';
   String _statusFilter = 'ALL';
   String _priceFilter = 'ALL';
+  String _sortBy = 'DEFAULT';
   bool _isGridView = false;
   int _page = 1;
   static const int _pageSize = 6;
@@ -170,8 +171,10 @@ class _RoomPageState extends State<RoomPage> {
                       options: const [
                         AppSelectOption(value: 'AVAILABLE', label: 'Còn trống'),
                         AppSelectOption(value: 'OCCUPIED', label: 'Đang thuê'),
+                        AppSelectOption(value: 'FULL', label: 'Đã đủ người'),
                         AppSelectOption(value: 'RESERVED', label: 'Đã đặt trước'),
                         AppSelectOption(value: 'MAINTENANCE', label: 'Đang bảo trì'),
+                        AppSelectOption(value: 'INACTIVE', label: 'Ngừng hoạt động'),
                       ],
                       onChanged: (v) => setModalState(() => status = v ?? 'AVAILABLE'),
                     ),
@@ -276,10 +279,18 @@ class _RoomPageState extends State<RoomPage> {
   Widget build(BuildContext context) {
     final repo = context.watch<AppDataRepository>();
     final query = _searchCtrl.text.trim().toLowerCase();
+    final roomState = repo.sectionState(DataSection.rooms);
+
+    // Nhà trọ đang lọc có thể vừa bị xóa / ra khỏi phạm vi sau khi đồng bộ: quay về "Tất cả"
+    // (giá trị không có trong danh sách lựa chọn sẽ làm hỏng ô chọn).
+    final propertyFilter = _propertyFilter == 'ALL' ||
+            repo.properties.any((p) => '${p.id}' == _propertyFilter)
+        ? _propertyFilter
+        : 'ALL';
 
     final filtered = repo.rooms.where((r) {
       final matchesProp =
-          _propertyFilter == 'ALL' || '${r.propertyId}' == _propertyFilter;
+          propertyFilter == 'ALL' || '${r.propertyId}' == propertyFilter;
       final matchesStatus = _statusFilter == 'ALL' || r.status == _statusFilter;
       final matchesPrice = switch (_priceFilter) {
         'UNDER_3M' => r.rentPrice < 3000000,
@@ -294,9 +305,37 @@ class _RoomPageState extends State<RoomPage> {
       return matchesProp && matchesStatus && matchesPrice && matchesQuery;
     }).toList();
 
-    final start = ((_page - 1) * _pageSize).clamp(0, filtered.length);
-    final end = (_page * _pageSize).clamp(0, filtered.length);
+    switch (_sortBy) {
+      case 'price_asc':
+        filtered.sort((a, b) => a.rentPrice.compareTo(b.rentPrice));
+      case 'price_desc':
+        filtered.sort((a, b) => b.rentPrice.compareTo(a.rentPrice));
+      case 'area_asc':
+        filtered.sort((a, b) => a.area.compareTo(b.area));
+      case 'area_desc':
+        filtered.sort((a, b) => b.area.compareTo(a.area));
+      case 'name_asc':
+        filtered.sort((a, b) => a.name.compareTo(b.name));
+    }
+
+    // Sau khi xóa / lọc, số trang có thể giảm: không để trang hiện tại vượt quá trang cuối.
+    final pageCount = filtered.isEmpty ? 1 : (filtered.length + _pageSize - 1) ~/ _pageSize;
+    final page = _page.clamp(1, pageCount);
+    final start = ((page - 1) * _pageSize).clamp(0, filtered.length);
+    final end = (page * _pageSize).clamp(0, filtered.length);
     final paged = filtered.sublist(start, end);
+    final hasFilter = query.isNotEmpty ||
+        propertyFilter != 'ALL' ||
+        _statusFilter != 'ALL' ||
+        _priceFilter != 'ALL';
+    void resetFilters() => setState(() {
+          _searchCtrl.clear();
+          _propertyFilter = 'ALL';
+          _statusFilter = 'ALL';
+          _priceFilter = 'ALL';
+          _sortBy = 'DEFAULT';
+          _page = 1;
+        });
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -332,7 +371,7 @@ class _RoomPageState extends State<RoomPage> {
               AppSelect<String>(
                 label: 'Tòa nhà / Nhà trọ',
                 width: 230,
-                value: _propertyFilter,
+                value: propertyFilter,
                 options: [
                   const AppSelectOption(value: 'ALL', label: 'Tất cả tòa nhà'),
                   for (final p in repo.properties)
@@ -351,8 +390,10 @@ class _RoomPageState extends State<RoomPage> {
                   AppSelectOption(value: 'ALL', label: 'Tất cả trạng thái'),
                   AppSelectOption(value: 'AVAILABLE', label: 'Còn trống'),
                   AppSelectOption(value: 'OCCUPIED', label: 'Đang thuê'),
+                  AppSelectOption(value: 'FULL', label: 'Đã đủ người'),
                   AppSelectOption(value: 'RESERVED', label: 'Đã đặt trước'),
                   AppSelectOption(value: 'MAINTENANCE', label: 'Đang bảo trì'),
+                  AppSelectOption(value: 'INACTIVE', label: 'Ngừng hoạt động'),
                 ],
                 onChanged: (v) => setState(() {
                   _statusFilter = v ?? 'ALL';
@@ -374,21 +415,29 @@ class _RoomPageState extends State<RoomPage> {
                   _page = 1;
                 }),
               ),
-              if (query.isNotEmpty ||
-                  _propertyFilter != 'ALL' ||
-                  _statusFilter != 'ALL' ||
-                  _priceFilter != 'ALL')
+              AppSelect<String>(
+                label: 'Sắp xếp',
+                width: 180,
+                value: _sortBy,
+                options: const [
+                  AppSelectOption(value: 'DEFAULT', label: 'Mặc định'),
+                  AppSelectOption(value: 'price_asc', label: 'Giá tăng dần ↑'),
+                  AppSelectOption(value: 'price_desc', label: 'Giá giảm dần ↓'),
+                  AppSelectOption(value: 'area_asc', label: 'Diện tích tăng dần ↑'),
+                  AppSelectOption(value: 'area_desc', label: 'Diện tích giảm dần ↓'),
+                  AppSelectOption(value: 'name_asc', label: 'Tên phòng (A → Z)'),
+                ],
+                onChanged: (v) => setState(() {
+                  _sortBy = v ?? 'DEFAULT';
+                  _page = 1;
+                }),
+              ),
+              if (hasFilter || _sortBy != 'DEFAULT')
                 AppButton(
                   label: 'Đặt lại',
                   variant: AppButtonVariant.outlined,
                   compact: true,
-                  onPressed: () => setState(() {
-                    _searchCtrl.clear();
-                    _propertyFilter = 'ALL';
-                    _statusFilter = 'ALL';
-                    _priceFilter = 'ALL';
-                    _page = 1;
-                  }),
+                  onPressed: resetFilters,
                 ),
             ],
           ),
@@ -396,13 +445,55 @@ class _RoomPageState extends State<RoomPage> {
 
         const SizedBox(height: AppSpacing.lg),
 
-        if (filtered.isEmpty)
+        if (repo.rooms.isNotEmpty && roomState.isError)
+          StaleDataBanner(
+            key: const Key('room_list_stale'),
+            message: 'Không cập nhật được danh sách phòng: ${roomState.message ?? 'lỗi không xác định'}. '
+                'Đang hiển thị dữ liệu của lần tải trước.',
+            onRetry: repo.syncWithBackend,
+          ),
+        if (repo.rooms.isEmpty && roomState.isForbidden)
+          const EmptyState(
+            key: Key('room_list_forbidden'),
+            icon: Icons.lock_outline_rounded,
+            title: 'Không có quyền xem danh sách phòng',
+            subtitle: 'Tài khoản của bạn không được cấp quyền truy cập dữ liệu này.',
+          )
+        else if (repo.rooms.isEmpty && roomState.isError)
+          ErrorState(
+            key: const Key('room_list_error'),
+            message: 'Không tải được danh sách phòng: ${roomState.message ?? 'lỗi không xác định'}',
+            onRetry: repo.syncWithBackend,
+          )
+        else if (repo.rooms.isEmpty && (roomState.isLoading || (repo.isSyncing && !roomState.isLoaded)))
+          const LoadingState(
+            key: Key('room_list_loading'),
+            message: 'Đang tải danh sách phòng...',
+          )
+        else if (repo.rooms.isEmpty && !roomState.isLoaded)
+          // Chưa tải và không có lượt tải nào đang chạy: không giả vờ "đang tải", không nói "rỗng".
+          ErrorState(
+            key: const Key('room_list_not_loaded'),
+            message: repo.lastSyncError ?? 'Chưa tải được danh sách phòng.',
+            onRetry: repo.syncWithBackend,
+          )
+        else if (repo.rooms.isEmpty)
           EmptyState(
+            key: const Key('room_list_empty'),
             icon: Icons.door_front_door_outlined,
-            title: 'Không có phòng nào phù hợp',
-            subtitle: 'Thử điều chỉnh bộ lọc hoặc thêm phòng trọ mới.',
+            title: 'Chưa có phòng nào',
+            subtitle: 'Hệ thống chưa có phòng nào trong phạm vi quản lý của bạn.',
             actionLabel: '+ Thêm phòng',
             onAction: () => context.go('/rooms/create'),
+          )
+        else if (filtered.isEmpty)
+          EmptyState(
+            key: const Key('room_list_no_match'),
+            icon: Icons.search_off_rounded,
+            title: 'Không có phòng nào phù hợp',
+            subtitle: 'Không có phòng nào khớp với từ khóa hoặc bộ lọc hiện tại.',
+            actionLabel: hasFilter ? 'Đặt lại bộ lọc' : null,
+            onAction: hasFilter ? resetFilters : null,
           )
         else if (_isGridView) ...[
           LayoutBuilder(
@@ -436,7 +527,7 @@ class _RoomPageState extends State<RoomPage> {
           AppSurfaceCard(
             padding: EdgeInsets.zero,
             child: PaginationWidget(
-              currentPage: _page,
+              currentPage: page,
               totalItems: filtered.length,
               pageSize: _pageSize,
               onPageChanged: (p) => setState(() => _page = p),
@@ -555,7 +646,7 @@ class _RoomPageState extends State<RoomPage> {
                   ],
                 ),
                 PaginationWidget(
-                  currentPage: _page,
+                  currentPage: page,
                   totalItems: filtered.length,
                   pageSize: _pageSize,
                   onPageChanged: (p) => setState(() => _page = p),

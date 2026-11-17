@@ -15,6 +15,10 @@ class PropertyHeaderCard extends StatelessWidget {
   final int availableRooms;
   final int maintenanceRooms;
 
+  /// false khi danh sách tòa nhà / phòng chưa tải được: hiển thị "—" thay vì 0 như số thật.
+  final bool propertyStatsAvailable;
+  final bool roomStatsAvailable;
+
   const PropertyHeaderCard({
     super.key,
     required this.totalProperties,
@@ -23,12 +27,15 @@ class PropertyHeaderCard extends StatelessWidget {
     required this.occupiedRooms,
     required this.availableRooms,
     required this.maintenanceRooms,
+    this.propertyStatsAvailable = true,
+    this.roomStatsAvailable = true,
   });
 
   @override
   Widget build(BuildContext context) {
     final occupancyRate =
         totalRooms > 0 ? ((occupiedRooms / totalRooms) * 100).round() : 0;
+    String rooms(int v) => roomStatsAvailable ? '$v' : '—';
 
     return Container(
       width: double.infinity,
@@ -82,11 +89,13 @@ class PropertyHeaderCard extends StatelessWidget {
                   children: [
                     _BannerPill(
                       icon: Icons.apartment_rounded,
-                      label: '$activeProperties/$totalProperties tòa nhà hoạt động',
+                      label: propertyStatsAvailable
+                          ? '$activeProperties/$totalProperties tòa nhà hoạt động'
+                          : '— tòa nhà hoạt động',
                     ),
                     _BannerPill(
                       icon: Icons.meeting_room_outlined,
-                      label: '$totalRooms phòng quản lý',
+                      label: '${rooms(totalRooms)} phòng quản lý',
                     ),
                   ],
                 ),
@@ -112,22 +121,22 @@ class PropertyHeaderCard extends StatelessWidget {
                   final items = [
                     _StripMetric(
                       label: 'Phòng còn trống',
-                      value: '$availableRooms phòng',
+                      value: '${rooms(availableRooms)} phòng',
                       valueColor: AppColors.successText,
                     ),
                     _StripMetric(
                       label: 'Đang khai thác',
-                      value: '$occupiedRooms phòng',
+                      value: '${rooms(occupiedRooms)} phòng',
                       valueColor: AppColors.secondary,
                     ),
                     _StripMetric(
                       label: 'Đang bảo trì',
-                      value: '$maintenanceRooms phòng',
+                      value: '${rooms(maintenanceRooms)} phòng',
                       valueColor: AppColors.warningText,
                     ),
                     _StripMetric(
                       label: 'Tỷ lệ lấp đầy',
-                      value: '$occupancyRate%',
+                      value: roomStatsAvailable ? '$occupancyRate%' : '—',
                       valueColor: AppColors.primary,
                     ),
                   ];
@@ -139,7 +148,8 @@ class PropertyHeaderCard extends StatelessWidget {
                       children: [
                         for (final item in items)
                           SizedBox(
-                            width: (constraints.maxWidth - AppSpacing.xl) / 2,
+                            width: ((constraints.maxWidth - AppSpacing.xl) / 2)
+                                .clamp(100.0, double.infinity),
                             child: item,
                           ),
                       ],

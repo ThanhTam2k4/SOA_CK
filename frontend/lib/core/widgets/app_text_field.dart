@@ -30,11 +30,15 @@ class AppTextField extends StatelessWidget {
       children: [
         Row(
           children: [
-            Text(
-              label,
-              style: AppTypography.captionMedium.copyWith(
-                color: AppColors.textPrimary,
-                fontWeight: FontWeight.w600,
+            Flexible(
+              child: Text(
+                label,
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
+                style: AppTypography.captionMedium.copyWith(
+                  color: AppColors.textPrimary,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ),
             if (requiredField)

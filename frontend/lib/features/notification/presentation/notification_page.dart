@@ -31,21 +31,35 @@ class NotificationPage extends StatelessWidget {
               variant: AppButtonVariant.outlined,
               onPressed: repo.unreadNotificationCount == 0
                   ? null
-                  : () {
-                      repo.markAllNotificationsRead();
+                  : () async {
+                      final err = await repo.markAllNotificationsRead();
+                      if (!context.mounted) return;
+                      if (err != null) {
+                        showErrorToast(context, err);
+                        return;
+                      }
                       showSuccessToast(context, 'Đã đánh dấu tất cả thông báo là đã đọc');
                     },
             ),
           ],
         ),
-        if (items.isEmpty)
-          const EmptyState(
+        // Chỉ nói "chưa có thông báo" khi Notification Service thật sự trả về danh sách rỗng.
+        SectionListGate(
+          state: repo.sectionState(DataSection.notifications),
+          isSyncing: repo.isSyncing,
+          lastSyncError: repo.lastSyncError,
+          hasData: items.isNotEmpty,
+          what: 'danh sách thông báo',
+          keyPrefix: 'notification_list',
+          onRetry: repo.syncWithBackend,
+          empty: const EmptyState(
+            key: Key('notification_list_empty'),
             icon: Icons.notifications_none_rounded,
             title: 'Chưa có thông báo mới',
             subtitle: 'Tất cả hoạt động hệ thống sẽ được hiển thị tại đây.',
-          )
-        else
-          AppSurfaceCard(
+          ),
+          noMatch: null,
+          builder: (_) => AppSurfaceCard(
             padding: EdgeInsets.zero,
             child: ListView.separated(
               shrinkWrap: true,
@@ -55,7 +69,11 @@ class NotificationPage extends StatelessWidget {
               itemBuilder: (context, index) {
                 final n = items[index];
                 return InkWell(
-                  onTap: () => repo.toggleNotificationRead(n.id),
+                  onTap: () async {
+                    final err = await repo.markNotificationRead(n.id);
+                    if (!context.mounted) return;
+                    if (err != null) showErrorToast(context, err);
+                  },
                   child: Container(
                     padding: const EdgeInsets.all(20),
                     color: n.isRead ? AppColors.surface : AppColors.primaryLight.withValues(alpha: 0.45),
@@ -116,6 +134,7 @@ class NotificationPage extends StatelessWidget {
               },
             ),
           ),
+        ),
       ],
     );
   }

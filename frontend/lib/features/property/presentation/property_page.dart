@@ -38,15 +38,14 @@ class _PropertyPageState extends State<PropertyPage> {
 
   void _openPropertyForm([PropertyItem? existing]) {
     final formKey = GlobalKey<FormState>();
-    final codeCtrl = TextEditingController(
-      text: existing?.code ?? 'NT-00${context.read<AppDataRepository>().properties.length + 1}',
-    );
+    // Mã để trống khi thêm mới: Property Service tự sinh mã duy nhất (không tự đoán mã ở client).
+    final codeCtrl = TextEditingController(text: existing?.code ?? '');
     final nameCtrl = TextEditingController(text: existing?.name ?? '');
     final addressCtrl = TextEditingController(text: existing?.address ?? '');
     final districtCtrl = TextEditingController(text: existing?.district ?? '');
-    final totalRoomsCtrl = TextEditingController(text: '${existing?.totalRooms ?? 10}');
     final descCtrl = TextEditingController(text: existing?.description ?? '');
     String status = existing?.status ?? 'ACTIVE';
+    bool saving = false;
 
     showDialog(
       context: context,
@@ -70,7 +69,8 @@ class _PropertyPageState extends State<PropertyPage> {
                           child: AppTextField(
                             label: 'Mã nhà trọ',
                             controller: codeCtrl,
-                            requiredField: true,
+                            hint: existing == null ? 'Để trống để hệ thống tự sinh' : null,
+                            requiredField: existing != null,
                           ),
                         ),
                         const SizedBox(width: 12),
@@ -99,29 +99,16 @@ class _PropertyPageState extends State<PropertyPage> {
                     AppTextField(
                       label: 'Địa chỉ chi tiết',
                       controller: addressCtrl,
-                      hint: 'Số nhà, đường, phường/xã...',
+                      hint: 'Số nhà, tên đường (không nhập phường / quận / thành phố)',
                       requiredField: true,
                     ),
                     const SizedBox(height: 14),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: AppTextField(
-                            label: 'Quận / Huyện / Khu vực',
-                            controller: districtCtrl,
-                            requiredField: true,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: AppTextField(
-                            label: 'Tổng số phòng',
-                            controller: totalRoomsCtrl,
-                            requiredField: true,
-                            isNumber: true,
-                          ),
-                        ),
-                      ],
+                    // "Tổng số phòng" do Property Service tự tính từ các phòng thật (trường chỉ đọc),
+                    // nên không có ô nhập ở đây: trước đây ô này nhận số nhưng không được lưu.
+                    AppTextField(
+                      label: 'Quận / Huyện / Khu vực',
+                      controller: districtCtrl,
+                      requiredField: true,
                     ),
                     const SizedBox(height: 14),
                     AppTextField(
@@ -142,28 +129,34 @@ class _PropertyPageState extends State<PropertyPage> {
             ),
             AppButton(
               label: existing == null ? 'Thêm nhà trọ' : 'Lưu thay đổi',
-              onPressed: () async {
+              isLoading: saving,
+              onPressed: saving
+                  ? null
+                  : () async {
                 if (!formKey.currentState!.validate()) return;
                 final repo = context.read<AppDataRepository>();
-                final total = int.tryParse(totalRoomsCtrl.text.trim()) ?? 0;
+                setModalState(() => saving = true);
 
                 if (existing == null) {
+                  // id / số phòng chỉ là giá trị tạm của model: payload gửi backend không chứa chúng,
+                  // danh sách hiển thị lại dữ liệu do backend trả về sau khi đồng bộ.
                   final err = await repo.addProperty(
                     PropertyItem(
-                      id: DateTime.now().millisecondsSinceEpoch,
+                      id: 0,
                       code: codeCtrl.text.trim(),
                       name: nameCtrl.text.trim(),
                       address: addressCtrl.text.trim(),
                       district: districtCtrl.text.trim(),
-                      totalRooms: total,
+                      totalRooms: 0,
                       occupiedRooms: 0,
-                      availableRooms: total,
+                      availableRooms: 0,
                       status: status,
                       description: descCtrl.text.trim(),
                     ),
                   );
                   if (!ctx.mounted || !mounted) return;
                   if (err != null) {
+                    setModalState(() => saving = false);
                     showErrorToast(context, err);
                     return;
                   }
@@ -176,13 +169,13 @@ class _PropertyPageState extends State<PropertyPage> {
                       name: nameCtrl.text.trim(),
                       address: addressCtrl.text.trim(),
                       district: districtCtrl.text.trim(),
-                      totalRooms: total,
                       status: status,
                       description: descCtrl.text.trim(),
                     ),
                   );
                   if (!ctx.mounted || !mounted) return;
                   if (err != null) {
+                    setModalState(() => saving = false);
                     showErrorToast(context, err);
                     return;
                   }
@@ -198,11 +191,22 @@ class _PropertyPageState extends State<PropertyPage> {
   }
 
   void _showPropertyDetails(PropertyItem item) {
-    final rooms = context
-        .read<AppDataRepository>()
-        .rooms
-        .where((r) => r.propertyId == item.id)
-        .toList();
+    final repo = context.read<AppDataRepository>();
+    final rooms = repo.rooms.where((r) => r.propertyId == item.id).toList();
+    final roomState = repo.sectionState(DataSection.rooms);
+    // Chỉ nói "chưa có phòng" khi danh sách phòng đã tải thành công.
+    final String emptyRoomsText;
+    if (roomState.isForbidden) {
+      emptyRoomsText = 'Tài khoản của bạn không có quyền xem danh sách phòng.';
+    } else if (roomState.isError) {
+      emptyRoomsText = 'Không tải được danh sách phòng: ${roomState.message ?? 'lỗi không xác định'}';
+    } else if (roomState.isLoading || (repo.isSyncing && !roomState.isLoaded)) {
+      emptyRoomsText = 'Đang tải danh sách phòng...';
+    } else if (!roomState.isLoaded) {
+      emptyRoomsText = 'Chưa tải được danh sách phòng.';
+    } else {
+      emptyRoomsText = 'Chưa có phòng nào được gán.';
+    }
 
     showDialog(
       context: context,
@@ -221,7 +225,7 @@ class _PropertyPageState extends State<PropertyPage> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Địa chỉ: ${item.address}', style: AppTypography.body),
+              Text('Địa chỉ: ${item.displayAddress}', style: AppTypography.body),
               const SizedBox(height: 6),
               Text('Khu vực: ${item.district}', style: AppTypography.caption),
               if (item.description.isNotEmpty) ...[
@@ -245,7 +249,7 @@ class _PropertyPageState extends State<PropertyPage> {
               ),
               const SizedBox(height: 8),
               if (rooms.isEmpty)
-                const Text('Chưa có phòng nào được gán.', style: AppTypography.caption)
+                Text(emptyRoomsText, style: AppTypography.caption)
               else
                 ConstrainedBox(
                   constraints: const BoxConstraints(maxHeight: 220),
@@ -305,6 +309,24 @@ class _PropertyPageState extends State<PropertyPage> {
     showSuccessToast(context, 'Đã xóa nhà trọ "${item.name}"');
   }
 
+  Future<void> _togglePropertyStatus(PropertyItem item) async {
+    final nextStatus = item.status == 'ACTIVE' ? 'INACTIVE' : 'ACTIVE';
+    final err = await context
+        .read<AppDataRepository>()
+        .updatePropertyStatus(item.id, nextStatus);
+    if (!mounted) return;
+    if (err != null) {
+      showErrorToast(context, err);
+      return;
+    }
+    showSuccessToast(
+      context,
+      nextStatus == 'ACTIVE'
+          ? 'Đã kích hoạt "${item.name}"'
+          : 'Đã tạm ngưng "${item.name}"',
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final repo = context.watch<AppDataRepository>();
@@ -315,17 +337,25 @@ class _PropertyPageState extends State<PropertyPage> {
       final matchesQuery = query.isEmpty ||
           p.name.toLowerCase().contains(query) ||
           p.code.toLowerCase().contains(query) ||
-          p.address.toLowerCase().contains(query) ||
+          p.displayAddress.toLowerCase().contains(query) ||
           p.district.toLowerCase().contains(query);
       return matchesStatus && matchesQuery;
     }).toList();
 
-    final start = ((_page - 1) * _pageSize).clamp(0, filtered.length);
-    final end = (_page * _pageSize).clamp(0, filtered.length);
+    // Sau khi xóa / lọc, số trang có thể giảm: không để trang hiện tại vượt quá trang cuối.
+    final pageCount = filtered.isEmpty ? 1 : (filtered.length + _pageSize - 1) ~/ _pageSize;
+    final page = _page.clamp(1, pageCount);
+    final start = ((page - 1) * _pageSize).clamp(0, filtered.length);
+    final end = (page * _pageSize).clamp(0, filtered.length);
     final paged = filtered.sublist(start, end);
 
     final activeCount =
         repo.properties.where((p) => p.status == 'ACTIVE').length;
+
+    // Trạng thái tải riêng của từng nhóm dữ liệu (Property Service có thể lỗi khi Gateway vẫn chạy).
+    final propState = repo.sectionState(DataSection.properties);
+    final roomState = repo.sectionState(DataSection.rooms);
+    final hasFilter = query.isNotEmpty || _statusFilter != 'ALL';
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -349,6 +379,9 @@ class _PropertyPageState extends State<PropertyPage> {
           occupiedRooms: repo.occupiedRoomsCount,
           availableRooms: repo.availableRoomsCount,
           maintenanceRooms: repo.maintenanceRoomsCount,
+          // Chưa tải được thì hiện "—", không hiện 0 như số thật.
+          propertyStatsAvailable: propState.isLoaded || repo.properties.isNotEmpty,
+          roomStatsAvailable: roomState.isLoaded || repo.rooms.isNotEmpty,
         ),
 
         const SizedBox(height: AppSpacing.xl),
@@ -396,13 +429,61 @@ class _PropertyPageState extends State<PropertyPage> {
 
         const SizedBox(height: AppSpacing.lg),
 
-        if (filtered.isEmpty)
+        if (repo.properties.isNotEmpty && propState.isError)
+          StaleDataBanner(
+            key: const Key('property_list_stale'),
+            message: 'Không cập nhật được danh sách tòa nhà: ${propState.message ?? 'lỗi không xác định'}. '
+                'Đang hiển thị dữ liệu của lần tải trước.',
+            onRetry: repo.syncWithBackend,
+          ),
+        if (repo.properties.isEmpty && propState.isForbidden)
+          const EmptyState(
+            key: Key('property_list_forbidden'),
+            icon: Icons.lock_outline_rounded,
+            title: 'Không có quyền xem danh sách tòa nhà',
+            subtitle: 'Tài khoản của bạn không được cấp quyền truy cập dữ liệu này.',
+          )
+        else if (repo.properties.isEmpty && propState.isError)
+          ErrorState(
+            key: const Key('property_list_error'),
+            message: 'Không tải được danh sách tòa nhà: ${propState.message ?? 'lỗi không xác định'}',
+            onRetry: repo.syncWithBackend,
+          )
+        else if (repo.properties.isEmpty && (propState.isLoading || (repo.isSyncing && !propState.isLoaded)))
+          const LoadingState(
+            key: Key('property_list_loading'),
+            message: 'Đang tải danh sách tòa nhà...',
+          )
+        else if (repo.properties.isEmpty && !propState.isLoaded)
+          // Chưa tải và không có lượt tải nào đang chạy: không giả vờ "đang tải", không nói "rỗng".
+          ErrorState(
+            key: const Key('property_list_not_loaded'),
+            message: repo.lastSyncError ?? 'Chưa tải được danh sách tòa nhà.',
+            onRetry: repo.syncWithBackend,
+          )
+        else if (repo.properties.isEmpty)
           EmptyState(
+            key: const Key('property_list_empty'),
             icon: Icons.apartment_rounded,
-            title: 'Không tìm thấy tòa nhà nào',
-            subtitle: 'Thử thay đổi từ khóa tìm kiếm hoặc thêm tòa nhà mới vào hệ thống.',
+            title: 'Chưa có tòa nhà nào',
+            subtitle: 'Hệ thống chưa có tòa nhà nào trong phạm vi quản lý của bạn.',
             actionLabel: '+ Thêm tòa nhà mới',
             onAction: () => _openPropertyForm(),
+          )
+        else if (filtered.isEmpty)
+          EmptyState(
+            key: const Key('property_list_no_match'),
+            icon: Icons.search_off_rounded,
+            title: 'Không tìm thấy tòa nhà phù hợp',
+            subtitle: 'Không có tòa nhà nào khớp với từ khóa hoặc bộ lọc hiện tại.',
+            actionLabel: hasFilter ? 'Đặt lại bộ lọc' : null,
+            onAction: hasFilter
+                ? () => setState(() {
+                      _searchCtrl.clear();
+                      _statusFilter = 'ALL';
+                      _page = 1;
+                    })
+                : null,
           )
         else
           AppSurfaceCard(
@@ -445,7 +526,7 @@ class _PropertyPageState extends State<PropertyPage> {
                       label: 'ĐỊA CHỈ',
                       flex: 3,
                       cellBuilder: (item) => Text(
-                        item.address,
+                        item.displayAddress,
                         style: AppTypography.bodyMd,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
@@ -465,16 +546,22 @@ class _PropertyPageState extends State<PropertyPage> {
                             Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
-                                Text(
-                                  '${item.occupiedRooms}/${item.totalRooms} thuê',
-                                  style: AppTypography.labelSm.copyWith(
-                                    color: AppColors.primary,
+                                Flexible(
+                                  child: Text(
+                                    '${item.occupiedRooms}/${item.totalRooms} thuê',
+                                    overflow: TextOverflow.ellipsis,
+                                    style: AppTypography.labelSm.copyWith(
+                                      color: AppColors.primary,
+                                    ),
                                   ),
                                 ),
-                                Text(
-                                  '${item.availableRooms} trống',
-                                  style: AppTypography.labelSm.copyWith(
-                                    color: AppColors.successText,
+                                Flexible(
+                                  child: Text(
+                                    '${item.availableRooms} trống',
+                                    overflow: TextOverflow.ellipsis,
+                                    style: AppTypography.labelSm.copyWith(
+                                      color: AppColors.successText,
+                                    ),
                                   ),
                                 ),
                               ],
@@ -505,11 +592,26 @@ class _PropertyPageState extends State<PropertyPage> {
                     ),
                     AppTableColumn(
                       label: 'THAO TÁC',
-                      width: 130,
+                      width: 165,
                       alignment: Alignment.centerRight,
                       cellBuilder: (item) => Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
+                          IconButton(
+                            tooltip: item.status == 'ACTIVE'
+                                ? 'Tạm ngưng hoạt động'
+                                : 'Kích hoạt lại',
+                            icon: Icon(
+                              item.status == 'ACTIVE'
+                                  ? Icons.pause_circle_outline_rounded
+                                  : Icons.play_circle_outline_rounded,
+                              size: 18,
+                              color: item.status == 'ACTIVE'
+                                  ? AppColors.warningText
+                                  : AppColors.successText,
+                            ),
+                            onPressed: () => _togglePropertyStatus(item),
+                          ),
                           IconButton(
                             tooltip: 'Xem chi tiết',
                             icon: const Icon(
@@ -543,7 +645,7 @@ class _PropertyPageState extends State<PropertyPage> {
                   ],
                 ),
                 PaginationWidget(
-                  currentPage: _page,
+                  currentPage: page,
                   totalItems: filtered.length,
                   pageSize: _pageSize,
                   onPageChanged: (p) => setState(() => _page = p),

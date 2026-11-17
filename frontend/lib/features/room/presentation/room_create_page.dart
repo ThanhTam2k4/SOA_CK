@@ -11,6 +11,7 @@ import '../../../core/widgets/app_text_field.dart';
 import '../../../core/widgets/page_header.dart';
 import '../../../core/widgets/state_views.dart';
 import '../../../core/widgets/status_badge.dart';
+import '../../../shared/models/app_models.dart';
 import '../../../shared/services/app_data_repository.dart';
 
 class RoomCreatePage extends StatefulWidget {
@@ -54,26 +55,80 @@ class _RoomCreatePageState extends State<RoomCreatePage> {
     super.dispose();
   }
 
-  void _handleSubmit() {
+  bool _submitting = false;
+
+  Future<void> _handleSubmit() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
 
-    if (_selectedPropertyId == null) {
+    final repo = context.read<AppDataRepository>();
+    // Dùng đúng nhà trọ đang hiển thị trong ô chọn. Nếu nhà trọ đó không còn trong danh sách
+    // (vừa bị xóa / ra khỏi phạm vi) thì báo lỗi, không tự gắn phòng sang nhà trọ khác.
+    final propertyId = _effectivePropertyId(repo.properties);
+    PropertyItem? prop;
+    for (final p in repo.properties) {
+      if (p.id == propertyId) prop = p;
+    }
+    if (prop == null) {
       showErrorToast(context, 'Vui lòng chọn nhà trọ / tòa nhà.');
       return;
     }
 
-    showSuccessToast(
-      context,
-      'Dữ liệu phòng "${_nameCtrl.text.trim()}" hợp lệ (UI Demo — chưa kết nối Django backend).',
+    setState(() => _submitting = true);
+    final err = await repo.addRoom(
+      RoomItem(
+        id: 0, // không gửi lên backend; id thật do Property Service cấp
+
+        code: _codeCtrl.text.trim(),
+        name: _nameCtrl.text.trim(),
+        propertyId: prop.id,
+        propertyName: prop.name,
+        floor: int.tryParse(_floorCtrl.text.trim()) ?? 1,
+        rentPrice: double.tryParse(_priceCtrl.text.trim()) ?? 0,
+        area: double.tryParse(_areaCtrl.text.trim()) ?? 20,
+        currentOccupants: 0,
+        maxOccupants: int.tryParse(_maxOccupantsCtrl.text.trim()) ?? 2,
+        status: _status,
+        description: _descriptionCtrl.text.trim(),
+      ),
     );
+    if (!mounted) return;
+    setState(() => _submitting = false);
+
+    if (err != null) {
+      showErrorToast(context, err);
+      return;
+    }
+
+    // Chỉ tới đây khi backend đã xác nhận tạo phòng (err == null).
+    showSuccessToast(context, 'Đã tạo phòng "${_nameCtrl.text.trim()}" trên hệ thống.');
     context.go('/rooms');
+  }
+
+  /// Nhà trọ đang được chọn: lựa chọn của người dùng nếu còn trong danh sách,
+  /// ngược lại là nhà trọ đầu tiên (ô chọn luôn hiển thị đúng giá trị này).
+  int? _effectivePropertyId(List<PropertyItem> properties) {
+    if (properties.any((p) => p.id == _selectedPropertyId)) return _selectedPropertyId;
+    return properties.isNotEmpty ? properties.first.id : null;
   }
 
   @override
   Widget build(BuildContext context) {
-    final properties = context.watch<AppDataRepository>().properties;
-    final activePropertyId = _selectedPropertyId ??
-        (properties.isNotEmpty ? properties.first.id : null);
+    final repo = context.watch<AppDataRepository>();
+    final properties = repo.properties;
+    final propState = repo.sectionState(DataSection.properties);
+    final activePropertyId = _effectivePropertyId(properties);
+    final String noPropertyText;
+    if (propState.isForbidden) {
+      noPropertyText = 'Tài khoản của bạn không có quyền xem danh sách tòa nhà.';
+    } else if (propState.isError) {
+      noPropertyText = 'Không tải được danh sách tòa nhà: ${propState.message ?? 'lỗi không xác định'}';
+    } else if (propState.isLoading || (repo.isSyncing && !propState.isLoaded)) {
+      noPropertyText = 'Đang tải danh sách tòa nhà...';
+    } else if (!propState.isLoaded) {
+      noPropertyText = 'Chưa tải được danh sách tòa nhà.';
+    } else {
+      noPropertyText = 'Chưa có tòa nhà nào. Hãy thêm nhà trọ trước khi tạo phòng.';
+    }
 
     return Form(
       key: _formKey,
@@ -83,17 +138,18 @@ class _RoomCreatePageState extends State<RoomCreatePage> {
           PageHeader(
             title: 'Thêm phòng mới',
             subtitle:
-                'Khởi tạo thông tin phòng trọ theo giao diện Stitch (chỉ kiểm tra hợp lệ cục bộ).',
+                'Khởi tạo thông tin phòng trọ theo giao diện Stitch và lưu qua API Gateway.',
             actions: [
               AppButton(
                 label: 'Hủy',
                 variant: AppButtonVariant.outlined,
-                onPressed: () => context.go('/rooms'),
+                onPressed: _submitting ? null : () => context.go('/rooms'),
               ),
               AppButton(
                 label: 'Lưu phòng',
                 icon: Icons.save_outlined,
-                onPressed: _handleSubmit,
+                isLoading: _submitting,
+                onPressed: _submitting ? null : _handleSubmit,
               ),
             ],
           ),
@@ -130,8 +186,9 @@ class _RoomCreatePageState extends State<RoomCreatePage> {
                         _ResponsivePair(
                           isWide: constraints.maxWidth >= 640,
                           first: activePropertyId == null
-                              ? const Text(
-                                  'Chưa có tòa nhà nào trong dữ liệu mẫu.',
+                              ? Text(
+                                  noPropertyText,
+                                  key: const Key('room_create_property_status'),
                                   style: AppTypography.caption,
                                 )
                               : AppSelect<int>(
@@ -291,9 +348,12 @@ class _RoomCreatePageState extends State<RoomCreatePage> {
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          const Text(
-                            'Hiển thị nhãn:',
-                            style: AppTypography.labelSm,
+                          const Expanded(
+                            child: Text(
+                              'Hiển thị nhãn:',
+                              style: AppTypography.labelSm,
+                              overflow: TextOverflow.ellipsis,
+                            ),
                           ),
                           StatusBadge.fromRoomStatus(_status),
                         ],
@@ -338,12 +398,13 @@ class _RoomCreatePageState extends State<RoomCreatePage> {
                 AppButton(
                   label: 'Hủy',
                   variant: AppButtonVariant.outlined,
-                  onPressed: () => context.go('/rooms'),
+                  onPressed: _submitting ? null : () => context.go('/rooms'),
                 ),
                 AppButton(
                   label: 'Lưu phòng',
                   icon: Icons.save_outlined,
-                  onPressed: _handleSubmit,
+                  isLoading: _submitting,
+                  onPressed: _submitting ? null : _handleSubmit,
                 ),
               ],
             ),

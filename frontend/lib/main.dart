@@ -3,8 +3,11 @@ import 'package:flutter_web_plugins/url_strategy.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import 'core/auth/role_access.dart';
 import 'core/theme/app_theme.dart';
+import 'features/auth/presentation/forbidden_page.dart';
 import 'features/auth/presentation/login_page.dart';
+import 'features/auth/presentation/register_page.dart';
 import 'features/billing/presentation/billing_page.dart';
 import 'features/contract/presentation/contract_page.dart';
 import 'features/dashboard/presentation/dashboard_page.dart';
@@ -74,24 +77,37 @@ class _NhaTroManagerAppState extends State<NhaTroManagerApp> {
     initialLocation: '/dashboard',
     refreshListenable: _auth,
     redirect: (_, state) {
-      final atLogin = state.matchedLocation == '/login';
+      // Trang công khai: đăng nhập và đăng ký (chỉ dành cho người chưa đăng nhập).
+      final path = state.uri.path;
+      final atPublic = const {'/login', '/register'}.contains(path);
       switch (_auth.status) {
         case AuthStatus.unknown:
           return null; // đang khôi phục phiên
         case AuthStatus.unauthenticated:
-          return atLogin ? null : '/login';
+          return atPublic ? null : '/login';
         case AuthStatus.authenticated:
-          return atLogin ? '/dashboard' : null;
+          final role = _auth.role;
+          final home = RoleAccess.homeFor(role);
+          if (atPublic || path == '/') return home;
+          if (RoleAccess.canAccess(role, path)) return null;
+          // Trang chính mặc định của quản lý (/dashboard) -> đưa TENANT về trang chính của mình;
+          // các trang quản lý khác (vd. gõ thẳng URL) -> báo không có quyền.
+          if (path == '/dashboard') return home;
+          return Uri(path: RoleAccess.forbiddenRoute, queryParameters: {'from': path}).toString();
       }
     },
     routes: [
       GoRoute(
         path: '/',
-        redirect: (_, _) => '/dashboard',
+        redirect: (_, _) => RoleAccess.homeFor(_auth.role),
       ),
       GoRoute(
         path: '/login',
         builder: (_, _) => const LoginPage(),
+      ),
+      GoRoute(
+        path: '/register',
+        builder: (_, _) => const RegisterPage(),
       ),
       ShellRoute(
         builder: (context, state, child) => MainLayout(
@@ -101,49 +117,57 @@ class _NhaTroManagerAppState extends State<NhaTroManagerApp> {
         routes: [
           GoRoute(
             path: '/dashboard',
-            builder: (_, _) => const DashboardPage(),
+            builder: (_, _) => const MainPageScroll(child: DashboardPage()),
           ),
           GoRoute(
             path: '/property',
-            builder: (_, _) => const PropertyPage(),
+            builder: (_, _) => const MainPageScroll(child: PropertyPage()),
           ),
           GoRoute(
             path: '/rooms',
-            builder: (_, _) => const RoomPage(),
+            builder: (_, _) => const MainPageScroll(child: RoomPage()),
           ),
           GoRoute(
             path: '/rooms/create',
-            builder: (_, _) => const RoomCreatePage(),
+            builder: (_, _) => const MainPageScroll(child: RoomCreatePage()),
           ),
           GoRoute(
             path: '/rooms/:id',
-            builder: (_, state) => RoomDetailPage(
-              roomId: state.pathParameters['id'] ?? '',
+            builder: (_, state) => MainPageScroll(
+              child: RoomDetailPage(
+                roomId: state.pathParameters['id'] ?? '',
+              ),
             ),
           ),
           GoRoute(
             path: '/tenant',
-            builder: (_, _) => const TenantPage(),
+            builder: (_, _) => const MainPageScroll(child: TenantPage()),
           ),
           GoRoute(
             path: '/contract',
-            builder: (_, _) => const ContractPage(),
+            builder: (_, _) => const MainPageScroll(child: ContractPage()),
           ),
           GoRoute(
             path: '/billing',
-            builder: (_, _) => const BillingPage(),
+            builder: (_, _) => const MainPageScroll(child: BillingPage()),
           ),
           GoRoute(
             path: '/maintenance',
-            builder: (_, _) => const MaintenancePage(),
+            builder: (_, _) => const MainPageScroll(child: MaintenancePage()),
           ),
           GoRoute(
             path: '/notifications',
-            builder: (_, _) => const NotificationPage(),
+            builder: (_, _) => const MainPageScroll(child: NotificationPage()),
           ),
           GoRoute(
             path: '/settings',
-            builder: (_, _) => const SettingsPage(),
+            builder: (_, _) => const MainPageScroll(child: SettingsPage()),
+          ),
+          GoRoute(
+            path: RoleAccess.forbiddenRoute,
+            builder: (_, state) => MainPageScroll(
+              child: ForbiddenPage(attemptedPath: state.uri.queryParameters['from']),
+            ),
           ),
         ],
       ),

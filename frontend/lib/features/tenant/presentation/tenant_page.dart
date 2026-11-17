@@ -41,13 +41,14 @@ class _TenantPageState extends State<TenantPage> {
     final nameCtrl = TextEditingController(text: existing?.fullName ?? '');
     final phoneCtrl = TextEditingController(text: existing?.phone ?? '');
     final emailCtrl = TextEditingController(text: existing?.email ?? '');
-    final roomCtrl = TextEditingController(
-      text: existing?.currentRoom ?? (repo.rooms.isNotEmpty ? repo.rooms.first.name : 'Phòng A101'),
-    );
-    final propCtrl = TextEditingController(
-      text: existing?.propertyName ?? (repo.properties.isNotEmpty ? repo.properties.first.name : ''),
-    );
-    final startCtrl = TextEditingController(text: existing?.startDate ?? '01/11/2026');
+    final idCardCtrl = TextEditingController(text: existing?.idCard ?? '');
+    final addressCtrl = TextEditingController(text: existing?.permanentAddress ?? '');
+    final occupationCtrl = TextEditingController(text: existing?.occupation ?? '');
+    final emergNameCtrl = TextEditingController(text: existing?.emergencyContactName ?? '');
+    final emergPhoneCtrl = TextEditingController(text: existing?.emergencyContactPhone ?? '');
+    final startCtrl = TextEditingController(text: existing?.startDate ?? '2026-11-01');
+    int? selectedRoomId = existing?.roomId ?? (repo.rooms.isNotEmpty ? repo.rooms.first.id : null);
+    bool tempReg = existing?.temporaryResidenceRegistered ?? false;
     String status = existing?.status ?? 'ACTIVE';
 
     showDialog(
@@ -55,23 +56,36 @@ class _TenantPageState extends State<TenantPage> {
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setModalState) => AlertDialog(
           title: Text(
-            existing == null ? 'Thêm người thuê mới' : 'Chỉnh sửa thông tin người thuê',
+            existing == null ? 'Thêm người thuê mới' : 'Chỉnh sửa hồ sơ người thuê',
             style: AppTypography.sectionTitle,
           ),
           content: SizedBox(
-            width: 500,
+            width: 560,
             child: Form(
               key: formKey,
               child: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    AppTextField(
-                      label: 'Họ và tên',
-                      controller: nameCtrl,
-                      requiredField: true,
+                    Row(
+                      children: [
+                        Expanded(
+                          child: AppTextField(
+                            label: 'Họ và tên',
+                            controller: nameCtrl,
+                            requiredField: true,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: AppTextField(
+                            label: 'CCCD / CMND',
+                            controller: idCardCtrl,
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 14),
+                    const SizedBox(height: 12),
                     Row(
                       children: [
                         Expanded(
@@ -86,48 +100,108 @@ class _TenantPageState extends State<TenantPage> {
                           child: AppTextField(
                             label: 'Email',
                             controller: emailCtrl,
-                            requiredField: true,
                           ),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 14),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: repo.rooms.isEmpty
+                              ? AppTextField(
+                                  label: 'Ngày bắt đầu',
+                                  controller: startCtrl,
+                                )
+                              : AppSelect<int?>(
+                                  label: 'Phòng hiện tại',
+                                  width: null,
+                                  value: repo.rooms.any((r) => r.id == selectedRoomId)
+                                      ? selectedRoomId
+                                      : null,
+                                  options: [
+                                    const AppSelectOption<int?>(
+                                      value: null,
+                                      label: 'Chưa gán phòng',
+                                    ),
+                                    for (final r in repo.rooms)
+                                      AppSelectOption<int?>(
+                                        value: r.id,
+                                        label: '${r.name} — ${r.propertyName}',
+                                      ),
+                                  ],
+                                  onChanged: (v) => setModalState(() => selectedRoomId = v),
+                                ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: AppSelect<String>(
+                            label: 'Trạng thái',
+                            width: null,
+                            value: status,
+                            options: const [
+                              AppSelectOption(value: 'ACTIVE', label: 'Đang thuê'),
+                              AppSelectOption(value: 'TEMPORARY_ABSENT', label: 'Tạm vắng'),
+                              AppSelectOption(value: 'MOVED_OUT', label: 'Đã trả phòng'),
+                            ],
+                            onChanged: (v) => setModalState(() => status = v ?? 'ACTIVE'),
+                          ),
+                        ),
+                      ],
+                    ),
+                    // Không có danh sách phòng thì không chọn phòng được: nói rõ lý do
+                    // (đang tải / lỗi / không có quyền / thật sự chưa có phòng).
+                    if (repo.rooms.isEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 6),
+                        child: Text(
+                          _roomsUnavailableText(repo),
+                          key: const Key('tenant_form_rooms_status'),
+                          style: AppTypography.caption.copyWith(color: AppColors.warningText),
+                        ),
+                      ),
+                    const SizedBox(height: 12),
                     Row(
                       children: [
                         Expanded(
                           child: AppTextField(
-                            label: 'Phòng hiện tại',
-                            controller: roomCtrl,
-                            requiredField: true,
+                            label: 'Nghề nghiệp',
+                            controller: occupationCtrl,
                           ),
                         ),
                         const SizedBox(width: 12),
                         Expanded(
                           child: AppTextField(
-                            label: 'Ngày bắt đầu thuê',
-                            controller: startCtrl,
-                            requiredField: true,
+                            label: 'Địa chỉ thường trú',
+                            controller: addressCtrl,
                           ),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 14),
-                    AppTextField(
-                      label: 'Nhà trọ',
-                      controller: propCtrl,
-                      requiredField: true,
-                    ),
-                    const SizedBox(height: 14),
-                    AppSelect<String>(
-                      label: 'Trạng thái',
-                      width: null,
-                      value: status,
-                      options: const [
-                        AppSelectOption(value: 'ACTIVE', label: 'Đang thuê'),
-                        AppSelectOption(value: 'TEMPORARY_ABSENT', label: 'Tạm vắng'),
-                        AppSelectOption(value: 'MOVED_OUT', label: 'Đã trả phòng'),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: AppTextField(
+                            label: 'Liên hệ khẩn cấp',
+                            controller: emergNameCtrl,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: AppTextField(
+                            label: 'SĐT khẩn cấp',
+                            controller: emergPhoneCtrl,
+                          ),
+                        ),
                       ],
-                      onChanged: (v) => setModalState(() => status = v ?? 'ACTIVE'),
+                    ),
+                    const SizedBox(height: 8),
+                    CheckboxListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Đã đăng ký tạm trú', style: AppTypography.bodyBold),
+                      value: tempReg,
+                      onChanged: (v) => setModalState(() => tempReg = v ?? false),
                     ),
                   ],
                 ),
@@ -142,42 +216,123 @@ class _TenantPageState extends State<TenantPage> {
             ),
             AppButton(
               label: existing == null ? 'Thêm người thuê' : 'Lưu thay đổi',
-              onPressed: () {
+              onPressed: () async {
                 if (!formKey.currentState!.validate()) return;
-                if (existing == null) {
-                  repo.addTenant(
-                    TenantItem(
-                      id: DateTime.now().millisecondsSinceEpoch,
-                      fullName: nameCtrl.text.trim(),
-                      phone: phoneCtrl.text.trim(),
-                      email: emailCtrl.text.trim(),
-                      currentRoom: roomCtrl.text.trim(),
-                      propertyName: propCtrl.text.trim(),
-                      startDate: startCtrl.text.trim(),
-                      status: status,
-                    ),
-                  );
-                  Navigator.pop(ctx);
-                  showSuccessToast(context, 'Đã thêm khách thuê "${nameCtrl.text.trim()}"');
-                } else {
-                  repo.updateTenant(
-                    existing.copyWith(
-                      fullName: nameCtrl.text.trim(),
-                      phone: phoneCtrl.text.trim(),
-                      email: emailCtrl.text.trim(),
-                      currentRoom: roomCtrl.text.trim(),
-                      propertyName: propCtrl.text.trim(),
-                      startDate: startCtrl.text.trim(),
-                      status: status,
-                    ),
-                  );
-                  Navigator.pop(ctx);
-                  showSuccessToast(context, 'Đã cập nhật "${nameCtrl.text.trim()}"');
+                final matchedRoom = selectedRoomId != null
+                    ? repo.rooms.where((r) => r.id == selectedRoomId).firstOrNull
+                    : null;
+                final item = TenantItem(
+                  id: existing?.id ?? DateTime.now().millisecondsSinceEpoch,
+                  roomId: selectedRoomId,
+                  fullName: nameCtrl.text.trim(),
+                  phone: phoneCtrl.text.trim(),
+                  email: emailCtrl.text.trim(),
+                  idCard: idCardCtrl.text.trim(),
+                  currentRoom: matchedRoom?.name ?? existing?.currentRoom ?? 'Chưa gán phòng',
+                  propertyName: matchedRoom?.propertyName ?? existing?.propertyName ?? '',
+                  startDate: startCtrl.text.trim(),
+                  status: status,
+                  permanentAddress: addressCtrl.text.trim(),
+                  occupation: occupationCtrl.text.trim(),
+                  emergencyContactName: emergNameCtrl.text.trim(),
+                  emergencyContactPhone: emergPhoneCtrl.text.trim(),
+                  temporaryResidenceRegistered: tempReg,
+                );
+                final err = existing == null
+                    ? await repo.addTenant(item)
+                    : await repo.updateTenant(item);
+                if (!ctx.mounted || !mounted) return;
+                if (err != null) {
+                  showErrorToast(context, err);
+                  return;
                 }
+                Navigator.pop(ctx);
+                showSuccessToast(
+                  context,
+                  existing == null
+                      ? 'Đã thêm khách thuê "${nameCtrl.text.trim()}"'
+                      : 'Đã cập nhật "${nameCtrl.text.trim()}"',
+                );
               },
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  static String _roomsUnavailableText(AppDataRepository repo) {
+    final state = repo.sectionState(DataSection.rooms);
+    if (state.isForbidden) return 'Tài khoản của bạn không có quyền xem danh sách phòng nên chưa thể gán phòng.';
+    if (state.isError) {
+      return 'Không tải được danh sách phòng: ${state.message ?? 'lỗi không xác định'}. Chưa thể gán phòng.';
+    }
+    if (state.isLoading || (repo.isSyncing && !state.isLoaded)) return 'Đang tải danh sách phòng...';
+    if (!state.isLoaded) return 'Chưa tải được danh sách phòng nên chưa thể gán phòng.';
+    return 'Hệ thống chưa có phòng nào để gán.';
+  }
+
+  /// Mở hộp thoại ngay; lịch sử được tải bên trong (đang tải / lỗi + Thử lại / 403 / rỗng / dữ liệu).
+  void _openHistoryDialog(TenantItem tenant) {
+    final repo = context.read<AppDataRepository>();
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Lịch sử cư trú: ${tenant.fullName}', style: AppTypography.sectionTitle),
+        content: SizedBox(
+          width: 540,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'CCCD: ${tenant.idCard.isNotEmpty ? tenant.idCard : '—'} · Nghề nghiệp: ${tenant.occupation.isNotEmpty ? tenant.occupation : '—'}',
+                style: AppTypography.caption,
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Tạm trú: ${tenant.temporaryResidenceRegistered ? 'Đã đăng ký' : 'Chưa đăng ký'} · Địa chỉ: ${tenant.permanentAddress.isNotEmpty ? tenant.permanentAddress : '—'}',
+                style: AppTypography.caption,
+              ),
+              const Divider(height: 20),
+              HistoryLoader<TenantHistoryItem>(
+                load: () => repo.fetchTenantHistory(tenant.id),
+                what: 'lịch sử thuê phòng',
+                emptyText: 'Chưa có bản ghi lịch sử thuê phòng.',
+                builder: (_, history) => ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 260),
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: history.length,
+                    separatorBuilder: (_, _) => const Divider(height: 1),
+                    itemBuilder: (_, idx) {
+                      final h = history[idx];
+                      return ListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(
+                          'Vào ở: ${h.moveInDate}${h.moveOutDate.isNotEmpty ? ' → Trả phòng: ${h.moveOutDate}' : ' (Đang ở)'}',
+                          style: AppTypography.bodyBold,
+                        ),
+                        subtitle: Text(
+                          '${h.roomId != null ? 'Phòng #${h.roomId} · ' : ''}${h.note}',
+                          style: AppTypography.caption,
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          AppButton(
+            label: 'Đóng',
+            variant: AppButtonVariant.outlined,
+            onPressed: () => Navigator.pop(ctx),
+          ),
+        ],
       ),
     );
   }
@@ -189,7 +344,12 @@ class _TenantPageState extends State<TenantPage> {
       message: 'Bạn có chắc chắn muốn xóa khách thuê "${item.fullName}" (${item.currentRoom})?',
     );
     if (!confirmed || !mounted) return;
-    context.read<AppDataRepository>().deleteTenant(item.id);
+    final err = await context.read<AppDataRepository>().deleteTenant(item.id);
+    if (!mounted) return;
+    if (err != null) {
+      showErrorToast(context, err);
+      return;
+    }
     showSuccessToast(context, 'Đã xóa hồ sơ "${item.fullName}"');
   }
 
@@ -208,9 +368,13 @@ class _TenantPageState extends State<TenantPage> {
       return matchesStatus && matchesQuery;
     }).toList();
 
-    final start = ((_page - 1) * _pageSize).clamp(0, filtered.length);
-    final end = (_page * _pageSize).clamp(0, filtered.length);
+    // Sau khi xóa / lọc, số trang có thể giảm: không để trang hiện tại vượt quá trang cuối.
+    final pageCount = filtered.isEmpty ? 1 : (filtered.length + _pageSize - 1) ~/ _pageSize;
+    final page = _page.clamp(1, pageCount);
+    final start = ((page - 1) * _pageSize).clamp(0, filtered.length);
+    final end = (page * _pageSize).clamp(0, filtered.length);
     final paged = filtered.sublist(start, end);
+    final hasFilter = query.isNotEmpty || _statusFilter != 'ALL';
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -258,16 +422,39 @@ class _TenantPageState extends State<TenantPage> {
 
         const SizedBox(height: AppSpacing.lg),
 
-        if (filtered.isEmpty)
-          EmptyState(
+        SectionListGate(
+          state: repo.sectionState(DataSection.tenants),
+          isSyncing: repo.isSyncing,
+          lastSyncError: repo.lastSyncError,
+          hasData: repo.tenants.isNotEmpty,
+          what: 'danh sách người thuê',
+          keyPrefix: 'tenant_list',
+          onRetry: repo.syncWithBackend,
+          empty: EmptyState(
+            key: const Key('tenant_list_empty'),
             icon: Icons.people_outline_rounded,
-            title: 'Chưa tìm thấy người thuê',
-            subtitle: 'Thử từ khóa khác hoặc thêm hồ sơ người thuê mới.',
+            title: 'Chưa có người thuê nào',
+            subtitle: 'Hệ thống chưa có hồ sơ người thuê nào trong phạm vi quản lý của bạn.',
             actionLabel: '+ Thêm người thuê',
             onAction: () => _openTenantForm(),
-          )
-        else
-          AppSurfaceCard(
+          ),
+          noMatch: filtered.isNotEmpty
+              ? null
+              : EmptyState(
+                  key: const Key('tenant_list_no_match'),
+                  icon: Icons.search_off_rounded,
+                  title: 'Chưa tìm thấy người thuê',
+                  subtitle: 'Không có người thuê nào khớp với từ khóa hoặc bộ lọc hiện tại.',
+                  actionLabel: hasFilter ? 'Đặt lại bộ lọc' : null,
+                  onAction: hasFilter
+                      ? () => setState(() {
+                            _searchCtrl.clear();
+                            _statusFilter = 'ALL';
+                            _page = 1;
+                          })
+                      : null,
+                ),
+          builder: (_) => AppSurfaceCard(
             padding: EdgeInsets.zero,
             child: Column(
               children: [
@@ -321,11 +508,20 @@ class _TenantPageState extends State<TenantPage> {
                     ),
                     AppTableColumn(
                       label: 'THAO TÁC',
-                      width: 105,
+                      width: 145,
                       alignment: Alignment.centerRight,
                       cellBuilder: (t) => Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
+                          IconButton(
+                            tooltip: 'Lịch sử cư trú & Hồ sơ',
+                            icon: const Icon(
+                              Icons.history_rounded,
+                              size: 18,
+                              color: AppColors.secondary,
+                            ),
+                            onPressed: () => _openHistoryDialog(t),
+                          ),
                           IconButton(
                             tooltip: 'Chỉnh sửa',
                             icon: const Icon(
@@ -350,7 +546,7 @@ class _TenantPageState extends State<TenantPage> {
                   ],
                 ),
                 PaginationWidget(
-                  currentPage: _page,
+                  currentPage: page,
                   totalItems: filtered.length,
                   pageSize: _pageSize,
                   onPageChanged: (p) => setState(() => _page = p),
@@ -358,6 +554,7 @@ class _TenantPageState extends State<TenantPage> {
               ],
             ),
           ),
+        ),
       ],
     );
   }

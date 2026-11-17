@@ -92,6 +92,121 @@ class AuthProvider extends ChangeNotifier {
     _setUnauthenticated();
   }
 
+  /// Vai trò được phép tự đăng ký (backend RegisterSerializer.PUBLIC_ROLES).
+  static const publicRegisterRoles = {'LANDLORD', 'TENANT'};
+
+  /// Đăng ký tài khoản mới qua Identity Service (/auth/register/).
+  /// Không đăng nhập tự động và không đổi trạng thái phiên: backend không trả token.
+  /// Ném [ApiException] (kèm `body` lỗi theo trường của DRF) khi thất bại.
+  Future<Map<String, dynamic>> register(Map<String, dynamic> payload) async {
+    final role = payload['role'];
+    if (!publicRegisterRoles.contains(role)) {
+      throw ApiException('Chỉ được đăng ký vai trò Chủ nhà trọ hoặc Khách thuê.');
+    }
+    final res = await ApiClient.post(
+      ApiConstants.register,
+      payload,
+      requireAuth: false,
+      retryOnUnauthorized: false,
+    );
+    if (res is! Map<String, dynamic>) {
+      throw ApiException('Phản hồi đăng ký không hợp lệ từ API Gateway.');
+    }
+    return res;
+  }
+
+  /// Đổi mật khẩu tài khoản đang đăng nhập qua Identity Service (/auth/change-password/).
+  Future<String?> changePassword(String oldPassword, String newPassword) async {
+    try {
+      await ApiClient.post(ApiConstants.changePassword, {
+        'old_password': oldPassword,
+        'new_password': newPassword,
+      });
+      return null;
+    } on ApiException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  /// Cập nhật hồ sơ người dùng hiện tại (/auth/me/).
+  Future<String?> updateProfile(Map<String, dynamic> payload) async {
+    try {
+      final res = await ApiClient.patch(ApiConstants.currentUser, payload);
+      if (res is Map<String, dynamic>) {
+        _user = res;
+        final token = await ApiClient.getAccessToken();
+        if (token != null) {
+          await ApiClient.saveSession(access: token, user: res);
+        }
+        notifyListeners();
+      }
+      return null;
+    } on ApiException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  /// Lấy danh sách tài khoản mẫu khi backend bật DEBUG=True (/auth/test-users/).
+  Future<List<Map<String, dynamic>>> fetchTestAccounts() async {
+    try {
+      final res = await ApiClient.get(ApiConstants.testUsers, requireAuth: false);
+      if (res is Map<String, dynamic> && res['test_accounts'] is List) {
+        return (res['test_accounts'] as List)
+            .whereType<Map<String, dynamic>>()
+            .toList();
+      }
+    } catch (_) {
+      // Production trả 404 hoặc Gateway chưa chạy -> ẩn danh sách nhanh.
+    }
+    return const [];
+  }
+
+  /// Quản lý tài khoản & phân quyền (/api/users/ — ADMIN / LANDLORD).
+  Future<List<Map<String, dynamic>>> fetchUsers() async {
+    final res = await ApiClient.get(ApiConstants.users);
+    if (res is List) {
+      return res.whereType<Map<String, dynamic>>().toList();
+    }
+    return const [];
+  }
+
+  Future<String?> createUser(Map<String, dynamic> payload) async {
+    try {
+      await ApiClient.post(ApiConstants.users, payload);
+      return null;
+    } on ApiException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  Future<String?> updateUser(int id, Map<String, dynamic> payload) async {
+    try {
+      await ApiClient.patch('${ApiConstants.users}$id/', payload);
+      return null;
+    } on ApiException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  Future<String?> deleteUser(int id) async {
+    try {
+      await ApiClient.delete('${ApiConstants.users}$id/');
+      return null;
+    } on ApiException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
   void _handleSessionExpired() {
     if (_status == AuthStatus.authenticated) {
       _errorMessage = 'Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại.';

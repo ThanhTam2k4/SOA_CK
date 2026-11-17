@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
+import '../../core/auth/role_access.dart';
 import '../../core/constants/app_colors.dart';
 import '../../core/constants/app_spacing.dart';
 import '../../core/utils/responsive.dart';
@@ -41,13 +42,15 @@ class MainLayout extends StatelessWidget {
       servicesUp: health?.upCount,
       servicesTotal: health?.services.length,
       gatewayUp: health?.gatewayStatus == ServiceStatus.up,
+      role: auth.role,
     );
+    final isManager = RoleAccess.isManager(auth.role);
 
     return Scaffold(
       backgroundColor: AppColors.background,
       drawer: isDesktop ? null : Drawer(width: AppSpacing.sidebarWidth, child: sidebar),
       bottomNavigationBar: isMobile
-          ? _MobileBottomNav(currentLocation: currentLocation)
+          ? _MobileBottomNav(currentLocation: currentLocation, role: auth.role)
           : null,
       body: Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -61,9 +64,12 @@ class MainLayout extends StatelessWidget {
                   userName: auth.displayName,
                   userRole: auth.roleDisplay,
                   unreadNotifications: repo.unreadNotificationCount,
-                  onGlobalSearch: (query) {
-                    context.go('/rooms');
-                  },
+                  // Tìm kiếm toàn cục mở trang Quản lý phòng -> chỉ dành cho vai trò quản lý.
+                  onGlobalSearch: isManager
+                      ? (query) {
+                          context.go('/rooms');
+                        }
+                      : null,
                   onSyncApi: () async {
                     await repo.syncWithBackend();
                     if (context.mounted) {
@@ -72,27 +78,22 @@ class MainLayout extends StatelessWidget {
                       } else {
                         showErrorToast(
                           context,
-                          'Không kết nối được API Gateway — đang hiển thị dữ liệu mẫu. ${repo.lastSyncError ?? ''}',
+                          'Không kết nối được API Gateway. ${repo.lastSyncError ?? ''}'.trim(),
                         );
                       }
                     }
                   },
                   onLogout: () => context.read<AuthProvider>().logout(),
                 ),
-                Expanded(
-                  child: SingleChildScrollView(
-                    padding: isMobile
-                        ? AppSpacing.pagePaddingMobile
-                        : AppSpacing.pagePaddingDesktop,
-                    child: Align(
-                      alignment: Alignment.topCenter,
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 1440),
-                        child: child,
-                      ),
-                    ),
+                if (repo.isSyncing && !repo.hasSyncedOnce)
+                  const LinearProgressIndicator(minHeight: 2),
+                if (!repo.isBackendConnected && !repo.isSyncing && repo.lastSyncError != null)
+                  _ConnectionErrorBanner(
+                    message: repo.lastSyncError!,
+                    hasStaleData: repo.hasSyncedOnce,
+                    onRetry: repo.syncWithBackend,
                   ),
-                ),
+                Expanded(child: child),
               ],
             ),
           ),
@@ -102,21 +103,114 @@ class MainLayout extends StatelessWidget {
   }
 }
 
-class _MobileBottomNav extends StatelessWidget {
-  final String currentLocation;
+/// Băng báo lỗi kết nối API Gateway dùng chung cho mọi trang, kèm nút "Thử lại".
+class _ConnectionErrorBanner extends StatelessWidget {
+  final String message;
+  final bool hasStaleData;
+  final Future<void> Function() onRetry;
 
-  const _MobileBottomNav({required this.currentLocation});
-
-  int _selectedIndex() {
-    if (currentLocation.startsWith('/property')) return 1;
-    if (currentLocation.startsWith('/rooms')) return 2;
-    if (currentLocation.startsWith('/settings')) return 3;
-    return 0;
-  }
+  const _ConnectionErrorBanner({
+    required this.message,
+    required this.hasStaleData,
+    required this.onRetry,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final selectedIndex = _selectedIndex();
+    final detail = hasStaleData
+        ? 'Dữ liệu đang hiển thị là của lần đồng bộ gần nhất và có thể chưa cập nhật.'
+        : 'Chưa tải được dữ liệu từ hệ thống.';
+    return Material(
+      color: AppColors.errorLight,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg, vertical: AppSpacing.sm),
+        child: Row(
+          children: [
+            const Icon(Icons.cloud_off_rounded, size: 18, color: AppColors.error),
+            const SizedBox(width: AppSpacing.sm),
+            Expanded(
+              child: Text(
+                'Không kết nối được API Gateway: ${message.replaceAll(RegExp(r'[.\s]+$'), '')}. $detail',
+                style: const TextStyle(color: AppColors.errorText, fontSize: 13),
+              ),
+            ),
+            const SizedBox(width: AppSpacing.sm),
+            TextButton.icon(
+              onPressed: onRetry,
+              icon: const Icon(Icons.refresh_rounded, size: 18),
+              label: const Text('Thử lại'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class MainPageScroll extends StatelessWidget {
+  final Widget child;
+
+  const MainPageScroll({super.key, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    final isMobile = MediaQuery.sizeOf(context).width < 768;
+    return SingleChildScrollView(
+      padding: isMobile
+          ? AppSpacing.pagePaddingMobile
+          : AppSpacing.pagePaddingDesktop,
+      child: Align(
+        alignment: Alignment.topCenter,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 1440),
+          child: child,
+        ),
+      ),
+    );
+  }
+}
+
+class _MobileNavItem {
+  final String route;
+  final String label;
+  final IconData icon;
+  final IconData selectedIcon;
+
+  const _MobileNavItem(this.route, this.label, this.icon, this.selectedIcon);
+}
+
+class _MobileBottomNav extends StatelessWidget {
+  final String currentLocation;
+  final String role;
+
+  const _MobileBottomNav({required this.currentLocation, required this.role});
+
+  static const _all = [
+    _MobileNavItem('/dashboard', 'Tổng quan', Icons.bar_chart_rounded, Icons.bar_chart_rounded),
+    _MobileNavItem('/property', 'Tòa nhà', Icons.apartment_rounded, Icons.apartment_rounded),
+    _MobileNavItem('/rooms', 'Phòng trọ', Icons.door_front_door_outlined, Icons.door_front_door_rounded),
+    _MobileNavItem(
+      '/notifications',
+      'Thông báo',
+      Icons.notifications_none_rounded,
+      Icons.notifications_rounded,
+    ),
+    _MobileNavItem('/settings', 'Cài đặt', Icons.settings_outlined, Icons.settings_rounded),
+  ];
+
+  /// Quản lý: Tổng quan / Tòa nhà / Phòng trọ / Cài đặt (như trước).
+  /// TENANT: chỉ các trang được phép (Thông báo / Cài đặt).
+  List<_MobileNavItem> get _items => RoleAccess.isManager(role)
+      ? _all.where((i) => i.route != '/notifications').toList()
+      : _all.where((i) => RoleAccess.canAccess(role, i.route)).toList();
+
+  @override
+  Widget build(BuildContext context) {
+    final items = _items;
+    final found = items.indexWhere(
+      (i) => currentLocation == i.route || currentLocation.startsWith('${i.route}/'),
+    );
+    final selectedIndex = found < 0 ? 0 : found;
 
     return Container(
       decoration: const BoxDecoration(
@@ -129,39 +223,14 @@ class _MobileBottomNav extends StatelessWidget {
         backgroundColor: AppColors.surface,
         elevation: 0,
         indicatorColor: AppColors.primary.withValues(alpha: 0.12),
-        onDestinationSelected: (index) {
-          switch (index) {
-            case 0:
-              context.go('/dashboard');
-            case 1:
-              context.go('/property');
-            case 2:
-              context.go('/rooms');
-            case 3:
-              context.go('/settings');
-          }
-        },
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.bar_chart_rounded, color: AppColors.textSecondary),
-            selectedIcon: Icon(Icons.bar_chart_rounded, color: AppColors.primary),
-            label: 'Tổng quan',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.apartment_rounded, color: AppColors.textSecondary),
-            selectedIcon: Icon(Icons.apartment_rounded, color: AppColors.primary),
-            label: 'Tòa nhà',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.door_front_door_outlined, color: AppColors.textSecondary),
-            selectedIcon: Icon(Icons.door_front_door_rounded, color: AppColors.primary),
-            label: 'Phòng trọ',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.settings_outlined, color: AppColors.textSecondary),
-            selectedIcon: Icon(Icons.settings_rounded, color: AppColors.primary),
-            label: 'Cài đặt',
-          ),
+        onDestinationSelected: (index) => context.go(items[index].route),
+        destinations: [
+          for (final item in items)
+            NavigationDestination(
+              icon: Icon(item.icon, color: AppColors.textSecondary),
+              selectedIcon: Icon(item.selectedIcon, color: AppColors.primary),
+              label: item.label,
+            ),
         ],
       ),
     );

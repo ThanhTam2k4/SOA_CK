@@ -146,3 +146,95 @@ class DashboardSummaryTests(SimpleTestCase):
         with mock.patch('gateway.client.get_json', side_effect=self._fake(unauthorized=True)):
             res = self.client.get('/api/dashboard/summary/', HTTP_AUTHORIZATION='Bearer tok')
         self.assertEqual(res.status_code, 401)
+
+
+# Trích OpenAPI đúng dạng drf-spectacular sinh cho Billing & Notification (:8005).
+_BILLING_DOC = ('SERVICE 5 — BILLING\n- CRUD hóa đơn\n- POST /{id}/pay/     đánh dấu đã thanh toán\n'
+                '- GET  /debt/         công nợ theo phòng')
+_NOTI_DOC = ('SERVICE 5 — NOTIFICATION\n- GET  /notifications/   thông báo của tôi\n'
+             '- POST /notifications/   gửi thông báo\n- POST /notifications/{id}/read/    đánh dấu đã đọc')
+_BILLING_SCHEMA = {
+    'openapi': '3.0.3',
+    'paths': {
+        '/api/billing/invoices/': {'get': {'operationId': 'billing_invoices_list', 'description': _BILLING_DOC},
+                                   'post': {'operationId': 'billing_invoices_create', 'description': _BILLING_DOC}},
+        '/api/billing/invoices/{id}/': {
+            'parameters': [{'name': 'id', 'in': 'path'}],
+            'get': {'operationId': 'billing_invoices_retrieve', 'description': _BILLING_DOC},
+            'patch': {'operationId': 'billing_invoices_partial_update', 'description': _BILLING_DOC},
+            'delete': {'operationId': 'billing_invoices_destroy', 'description': _BILLING_DOC}},
+        '/api/billing/invoices/{id}/pay/': {'post': {'operationId': 'billing_invoices_pay_create',
+                                                     'description': _BILLING_DOC}},
+        '/api/billing/invoices/debt/': {'get': {'operationId': 'billing_invoices_debt_retrieve',
+                                                'description': _BILLING_DOC}},
+        '/api/notifications/': {'get': {'operationId': 'notifications_list', 'description': _NOTI_DOC},
+                                'post': {'operationId': 'notifications_create', 'description': _NOTI_DOC}},
+        '/api/notifications/{id}/': {'get': {'operationId': 'notifications_retrieve', 'description': _NOTI_DOC}},
+        '/api/notifications/{id}/read/': {'post': {'operationId': 'notifications_read_create',
+                                                   'description': _NOTI_DOC}},
+        '/health/': {'get': {'operationId': 'health_retrieve',
+                             'description': 'GET /health/ — trạng thái thực tế của service đang chạy.\n\nchi tiết'}},
+    },
+}
+
+
+class ServiceEndpointsTests(SimpleTestCase):
+    def _get(self, key, **patch_kwargs):
+        with mock.patch('gateway.client.get_json', **patch_kwargs) as fake:
+            res = self.client.get(f'/api/system/services/{key}/endpoints/')
+        return res, fake
+
+    def test_lists_real_endpoints_from_service_openapi(self):
+        res, fake = self._get('billing', return_value=_resp(200, _BILLING_SCHEMA))
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        # Đọc đúng schema của chính service sở hữu (Billing :8005), không nhập tay.
+        self.assertEqual(fake.call_args.args[0], 'http://127.0.0.1:8005/api/schema/?format=json')
+        self.assertEqual((data['key'], data['port'], data['base_url'], data['status']),
+                         ('billing', 8005, 'http://127.0.0.1:8005', 'UP'))
+        rows = [(e['group'], e['method'], e['path'], e['description']) for e in data['endpoints']]
+        self.assertEqual(rows, [
+            ('billing', 'GET', '/api/billing/invoices/', 'Danh sách'),
+            ('billing', 'POST', '/api/billing/invoices/', 'Tạo mới'),
+            ('billing', 'GET', '/api/billing/invoices/{id}/', 'Xem chi tiết'),
+            ('billing', 'PATCH', '/api/billing/invoices/{id}/', 'Cập nhật một phần'),
+            ('billing', 'DELETE', '/api/billing/invoices/{id}/', 'Xóa'),
+            ('billing', 'POST', '/api/billing/invoices/{id}/pay/', 'đánh dấu đã thanh toán'),
+            ('billing', 'GET', '/api/billing/invoices/debt/', 'công nợ theo phòng'),
+            ('notifications', 'GET', '/api/notifications/', 'thông báo của tôi'),
+            ('notifications', 'POST', '/api/notifications/', 'gửi thông báo'),
+            ('notifications', 'GET', '/api/notifications/{id}/', 'Xem chi tiết'),
+            ('notifications', 'POST', '/api/notifications/{id}/read/', 'đánh dấu đã đọc'),
+            ('health', 'GET', '/health/', 'GET /health/ — trạng thái thực tế của service đang chạy.'),
+        ])
+        self.assertEqual(data['count'], 12)
+        self.assertEqual(data['endpoints'][5]['full_url'], 'http://127.0.0.1:8005/api/billing/invoices/{id}/pay/')
+
+    def test_view_specific_docstring_used_and_service_tag_stripped(self):
+        schema = {'paths': {'/api/auth/me/': {
+            'get': {'description': 'SERVICE 1 — IDENTITY: Lấy & cập nhật thông tin cá nhân.'},
+            'patch': {'description': 'SERVICE 1 — IDENTITY: Lấy & cập nhật thông tin cá nhân.'}}}}
+        data = self._get('identity', return_value=_resp(200, schema))[0].json()
+        self.assertEqual([e['description'] for e in data['endpoints']],
+                         ['Lấy & cập nhật thông tin cá nhân.'] * 2)
+        self.assertEqual(data['endpoints'][0]['group'], 'auth')
+
+    def test_service_down_reports_down_with_connection_info(self):
+        res, _ = self._get('tenant', side_effect=requests.exceptions.ConnectionError())
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual((data['status'], data['endpoints'], data['port'], data['base_url']),
+                         ('DOWN', [], 8003, 'http://127.0.0.1:8003'))
+        self.assertIn('Không kết nối', data['error'])
+
+    def test_timeout_and_invalid_schema(self):
+        data = self._get('contract', side_effect=requests.exceptions.ReadTimeout())[0].json()
+        self.assertEqual(data['status'], 'DOWN')
+        data = self._get('contract', return_value=_resp(500, None, b'<html>'))[0].json()
+        self.assertEqual((data['status'], data['endpoints']), ('UNKNOWN', []))
+        self.assertIn('HTTP 500', data['error'])
+
+    def test_unknown_service_404(self):
+        res, fake = self._get('payment', return_value=_resp(200, {}))
+        self.assertEqual(res.status_code, 404)
+        fake.assert_not_called()

@@ -179,8 +179,9 @@ nhatro_management/
 
 ## 🧭 LỘ TRÌNH / HẠN CHẾ HIỆN TẠI
 
-- Các trang Flutter **Người thuê / Hợp đồng / Hóa đơn / Thông báo** vẫn dùng dữ liệu mẫu cục bộ (backend API đã sẵn sàng);
-  Dashboard đã lấy số liệu thật của các service này qua `/api/dashboard/summary/`.
+- **Sprint 1 — Tenant / Contract / Billing / Notification**: hoàn thiện ở mức backend (service độc lập, database riêng,
+  URL/port riêng, API, health check, định tuyến qua API Gateway). Frontend của các service này sẽ được triển khai và
+  hoàn thiện trong Sprint tiếp theo. Dashboard đã lấy số liệu thật của các service này qua `/api/dashboard/summary/`.
 - `backend/templates/portal.html` & `api_docs.html` (giao diện web tổng hợp cũ trên :8000) gọi thẳng các port 8001–8005
   nên không còn được phục vụ sau khi :8000 chuyển thành API Gateway.
 - Thông tin CCCD/địa chỉ hiện vẫn nằm trên `User` (Identity) và đồng thời có trong `TenantProfile`; sẽ chuyển hẳn sang Tenant Service.

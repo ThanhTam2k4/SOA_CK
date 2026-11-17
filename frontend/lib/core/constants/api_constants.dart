@@ -17,6 +17,8 @@ class ApiConstants {
   // GATEWAY — endpoint do chính Gateway xử lý / tổng hợp
   static const String systemHealth = '$baseUrl/system/health/';
   static const String dashboardSummary = '$baseUrl/dashboard/summary/';
+  /// Thông tin kết nối + endpoint thực tế của 1 service (Gateway đọc OpenAPI của service đó).
+  static String serviceEndpoints(String key) => '$baseUrl/system/services/$key/endpoints/';
 
   // SERVICE 1 — IDENTITY (Gateway -> :8001)
   static const String login = '$baseUrl/auth/login/';
@@ -25,6 +27,7 @@ class ApiConstants {
   static const String currentUser = '$baseUrl/auth/me/';
   static const String logout = '$baseUrl/auth/logout/';
   static const String changePassword = '$baseUrl/auth/change-password/';
+  static const String testUsers = '$baseUrl/auth/test-users/';
   static const String users = '$baseUrl/users/';
 
   // SERVICE 2 — PROPERTY & MAINTENANCE (Gateway -> :8002)

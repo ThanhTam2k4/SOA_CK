@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import '../auth/role_access.dart';
 import '../constants/app_colors.dart';
 import '../constants/app_spacing.dart';
 import '../theme/app_typography.dart';
@@ -29,6 +30,9 @@ class AppSidebar extends StatelessWidget {
   final int? servicesTotal;
   final bool gatewayUp;
 
+  /// Vai trò người dùng: chỉ hiện menu vai trò này được mở ([RoleAccess]). null = hiện tất cả.
+  final String? role;
+
   const AppSidebar({
     super.key,
     required this.currentLocation,
@@ -36,6 +40,7 @@ class AppSidebar extends StatelessWidget {
     this.servicesUp,
     this.servicesTotal,
     this.gatewayUp = false,
+    this.role,
   });
 
   (Color, String, String) get _soaStatus {
@@ -53,7 +58,11 @@ class AppSidebar extends StatelessWidget {
     );
   }
 
-  List<SidebarNavItem> get _mainItems => [
+  bool _visible(String route) => role == null || RoleAccess.canAccess(role, route);
+
+  List<SidebarNavItem> get _mainItems => _allMainItems.where((i) => _visible(i.route)).toList();
+
+  List<SidebarNavItem> get _allMainItems => [
         const SidebarNavItem(
           label: 'Tổng quan',
           route: '/dashboard',
@@ -194,6 +203,7 @@ class AppSidebar extends StatelessWidget {
                   ),
                   child: Divider(color: AppColors.border, height: 1),
                 ),
+                if (_visible('/settings'))
                 _SidebarTile(
                   item: const SidebarNavItem(
                     label: 'Cài đặt',

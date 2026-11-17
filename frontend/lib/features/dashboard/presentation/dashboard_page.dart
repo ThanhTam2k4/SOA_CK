@@ -10,9 +10,11 @@ import '../../../core/widgets/app_button.dart';
 import '../../../core/widgets/app_table.dart';
 import '../../../core/widgets/page_header.dart';
 import '../../../core/widgets/stat_card.dart';
+import '../../../core/widgets/state_views.dart';
 import '../../../core/widgets/status_badge.dart';
 import '../../../shared/models/app_models.dart';
 import '../../../shared/services/app_data_repository.dart';
+import '../widgets/service_endpoints_dialog.dart';
 import '../widgets/soa_architecture_card.dart';
 import 'widgets/monthly_revenue_chart.dart';
 import 'widgets/room_ratio_chart.dart';
@@ -26,22 +28,29 @@ class DashboardPage extends StatelessWidget {
     final width = MediaQuery.sizeOf(context).width;
     final cols = AppResponsive.statGridCrossAxisCount(width);
 
-    // Đã kết nối Gateway: số liệu THẬT từ GET /api/dashboard/summary/.
-    // Trường null (service sở hữu đang DOWN) hiển thị "—", không bịa số.
-    // Chưa kết nối: số liệu tính từ dữ liệu mẫu.
-    final s = repo.isBackendConnected ? repo.dashboardSummary : null;
+    // Chỉ dùng số liệu THẬT từ GET /api/dashboard/summary/ (Gateway tổng hợp).
+    // - dashboardSummary chỉ có giá trị sau khi tải thành công (được giữ lại khi lần tải sau lỗi).
+    // - Chưa có số liệu -> "…" khi đang tải, "—" khi lỗi / chưa tải; trường null (service sở hữu
+    //   số liệu DOWN) -> "—". Không bịa số, không đổi lỗi thành 0, không tự tính từ dữ liệu cục bộ.
+    final summaryState = repo.sectionState(DataSection.dashboard);
+    final s = repo.dashboardSummary;
     final live = s != null;
-    String n(int? liveValue, int mockValue) => live ? (liveValue?.toString() ?? '—') : '$mockValue';
+    final loadingSummary = !live && (summaryState.isLoading || (repo.isSyncing && !repo.hasSyncedOnce));
+    final placeholder = loadingSummary ? '…' : '—';
+    String n(int? liveValue) => live ? (liveValue?.toString() ?? '—') : placeholder;
+    String money(double? value) => live ? (value == null ? '—' : AppFormatters.currency(value)) : placeholder;
 
-    final occupancyText = live
-        ? (s.occupancyRatePercent != null ? '${s.occupancyRatePercent!.round()}%' : '—')
-        : '${repo.totalRoomsCount > 0 ? ((repo.occupiedRoomsCount / repo.totalRoomsCount) * 100).round() : 0}%';
-    final unpaid = live ? (s.unpaidInvoices ?? 0) : repo.unpaidInvoicesCount;
+    final occupancyText = live && s.occupancyRatePercent != null ? '${s.occupancyRatePercent!.round()}%' : '—';
+    final unpaid = live ? (s.unpaidInvoices ?? 0) : 0;
+    // Nút "Thử lại" riêng chỉ cần khi Gateway vẫn phản hồi (lỗi ở một service / summary).
+    // Mất kết nối Gateway đã có banner chung kèm "Thử lại" ở MainLayout.
+    final canRetry = repo.isBackendConnected;
+    Future<void> retry() => repo.syncWithBackend();
 
     final stats = [
       StatCard(
         title: 'Tổng số tòa nhà',
-        value: n(s?.totalProperties, repo.totalPropertiesCount),
+        value: n(s?.totalProperties),
         subtitle: 'Cơ sở đang vận hành',
         icon: Icons.apartment_rounded,
         tone: StatIconTone.primary,
@@ -49,7 +58,7 @@ class DashboardPage extends StatelessWidget {
       ),
       StatCard(
         title: 'Tổng số phòng',
-        value: n(s?.totalRooms, repo.totalRoomsCount),
+        value: n(s?.totalRooms),
         subtitle: 'Tỷ lệ lấp đầy $occupancyText',
         icon: Icons.door_front_door_outlined,
         tone: StatIconTone.primary,
@@ -57,7 +66,7 @@ class DashboardPage extends StatelessWidget {
       ),
       StatCard(
         title: 'Phòng đang thuê',
-        value: n(s?.occupiedRooms, repo.occupiedRoomsCount),
+        value: n(s?.occupiedRooms),
         subtitle: 'Đang khai thác ổn định',
         icon: Icons.people_outline_rounded,
         tone: StatIconTone.primary,
@@ -65,7 +74,7 @@ class DashboardPage extends StatelessWidget {
       ),
       StatCard(
         title: 'Phòng còn trống',
-        value: n(s?.availableRooms, repo.availableRoomsCount),
+        value: n(s?.availableRooms),
         subtitle: 'Sẵn sàng đón khách',
         icon: Icons.check_circle_outline_rounded,
         tone: StatIconTone.success,
@@ -73,7 +82,7 @@ class DashboardPage extends StatelessWidget {
       ),
       StatCard(
         title: 'Hợp đồng hiệu lực',
-        value: n(s?.activeContracts, repo.activeContractsCount),
+        value: n(s?.activeContracts),
         subtitle: live && (s.expiringSoonContracts ?? 0) > 0
             ? '${s.expiringSoonContracts} sắp hết hạn'
             : 'Đang hoạt động',
@@ -83,7 +92,7 @@ class DashboardPage extends StatelessWidget {
       ),
       StatCard(
         title: 'Hóa đơn cần thu',
-        value: n(s?.unpaidInvoices, repo.unpaidInvoicesCount),
+        value: n(s?.unpaidInvoices),
         subtitle: live && s.unpaidAmount != null
             ? 'Còn nợ ${AppFormatters.currency(s.unpaidAmount)}'
             : 'Chờ thanh toán / quá hạn',
@@ -93,7 +102,27 @@ class DashboardPage extends StatelessWidget {
             : StatIconTone.neutral,
         onTap: () => context.go('/billing'),
       ),
+      // Hai chỉ số backend đã cung cấp sẵn — hiển thị nguyên giá trị, không tự tính lại.
+      StatCard(
+        title: 'Doanh thu dự kiến / tháng',
+        value: money(s?.estimatedMonthlyRevenue),
+        subtitle: 'Tổng giá thuê các phòng đang thuê',
+        icon: Icons.trending_up_rounded,
+        tone: StatIconTone.success,
+        onTap: () => context.go('/rooms'),
+      ),
+      StatCard(
+        title: 'Tổng tiền chưa thanh toán',
+        value: money(s?.unpaidAmount),
+        subtitle: 'Hóa đơn chưa thu / quá hạn',
+        icon: Icons.account_balance_wallet_outlined,
+        tone: (live && (s.unpaidAmount ?? 0) > 0) ? StatIconTone.warning : StatIconTone.neutral,
+        onTap: () => context.go('/billing'),
+      ),
     ];
+
+    final propertySection = repo.sectionState(DataSection.properties);
+    final invoiceSection = repo.sectionState(DataSection.invoices);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -117,18 +146,44 @@ class DashboardPage extends StatelessWidget {
           ],
         ),
 
-        if (!repo.isBackendConnected)
-          _DataSourceBanner(
-            message: 'Chưa kết nối được API Gateway — đang hiển thị DỮ LIỆU MẪU. '
-                '${repo.lastSyncError ?? ''}',
+        // Lỗi mất kết nối Gateway được hiển thị chung ở MainLayout (kèm nút "Thử lại").
+        if (loadingSummary)
+          const _DataSourceBanner(
+            key: Key('dashboard_summary_loading'),
+            message: 'Đang tải số liệu tổng quan từ API Gateway...',
+            isError: false,
+            loading: true,
+          )
+        else if (!repo.isBackendConnected && !live)
+          const _DataSourceBanner(
+            message: 'Chưa có số liệu tổng quan vì chưa kết nối được API Gateway.',
             isError: true,
           )
-        else if (repo.dashboardError != null)
-          _DataSourceBanner(message: 'Không lấy được số liệu tổng quan: ${repo.dashboardError}', isError: true)
+        else if (!repo.isBackendConnected)
+          const _DataSourceBanner(
+            message: 'Mất kết nối API Gateway: đang hiển thị số liệu của lần cập nhật trước.',
+            isError: true,
+          )
+        else if (summaryState.isForbidden)
+          const _DataSourceBanner(
+            key: Key('dashboard_summary_forbidden'),
+            message: 'Tài khoản của bạn không có quyền xem số liệu tổng quan.',
+            isError: false,
+          )
+        else if (summaryState.isError || repo.dashboardError != null)
+          _DataSourceBanner(
+            key: const Key('dashboard_summary_error'),
+            message: 'Không lấy được số liệu tổng quan: '
+                '${repo.dashboardError ?? summaryState.message ?? 'lỗi không xác định'}'
+                '${live ? ' Đang hiển thị số liệu của lần cập nhật trước.' : ''}',
+            isError: true,
+            onRetry: canRetry ? retry : null,
+          )
         else if (live && !s.complete)
           _DataSourceBanner(
             message: 'Thiếu số liệu do service không phản hồi: ${s.failedSources.join(', ')}',
             isError: false,
+            onRetry: canRetry ? retry : null,
           ),
 
         // KPI Statistics Grid
@@ -151,12 +206,55 @@ class DashboardPage extends StatelessWidget {
         LayoutBuilder(
           builder: (context, constraints) {
             final isWide = constraints.maxWidth >= 900;
-            final ratioChart = RoomRatioChart(
-              occupied: live ? (s.occupiedRooms ?? 0) : repo.occupiedRoomsCount,
-              available: live ? (s.availableRooms ?? 0) : repo.availableRoomsCount,
-              maintenance: live ? (s.maintenanceRooms ?? 0) : repo.maintenanceRoomsCount,
-            );
-            final revenueChart = MonthlyRevenueChart(points: repo.revenuePoints);
+            // Chỉ vẽ biểu đồ khi Property Service đã trả số liệu phòng (0 thật vẫn được vẽ là 0).
+            // Không có số liệu -> trạng thái đang tải / lỗi / không có quyền, KHÔNG vẽ 0/0/0 giả.
+            final hasRoomStats = live && s.occupiedRooms != null && s.availableRooms != null;
+            final Widget ratioChart;
+            if (hasRoomStats) {
+              ratioChart = RoomRatioChart(
+                occupied: s.occupiedRooms!,
+                available: s.availableRooms!,
+                maintenance: s.maintenanceRooms ?? 0,
+              );
+            } else if (loadingSummary) {
+              ratioChart = const LoadingState(
+                key: Key('room_ratio_loading'),
+                message: 'Đang tải tỷ lệ trạng thái phòng...',
+              );
+            } else if (summaryState.isForbidden) {
+              ratioChart = const EmptyState(
+                key: Key('room_ratio_forbidden'),
+                icon: Icons.lock_outline_rounded,
+                title: 'Không có quyền xem tỷ lệ phòng',
+                subtitle: 'Tài khoản của bạn không được xem số liệu tổng quan.',
+              );
+            } else if (canRetry) {
+              ratioChart = ErrorState(
+                key: const Key('room_ratio_error'),
+                message: live
+                    ? 'Property Service không trả số liệu phòng nên chưa vẽ được tỷ lệ trạng thái phòng.'
+                    : 'Chưa lấy được số liệu tổng quan nên chưa vẽ được tỷ lệ trạng thái phòng.',
+                onRetry: retry,
+              );
+            } else {
+              ratioChart = const EmptyState(
+                key: Key('room_ratio_unavailable'),
+                icon: Icons.donut_large_rounded,
+                title: 'Chưa có số liệu tỷ lệ phòng',
+                subtitle: 'Biểu đồ sẽ hiển thị khi kết nối được API Gateway.',
+              );
+            }
+            // Backend (Gateway /dashboard/summary/) chưa cung cấp chuỗi doanh thu theo tháng:
+            // hiển thị trạng thái rỗng, không vẽ số bịa.
+            final Widget revenueChart = repo.revenuePoints.isEmpty
+                ? const EmptyState(
+                    key: Key('revenue_chart_empty'),
+                    icon: Icons.bar_chart_rounded,
+                    title: 'Chưa có dữ liệu doanh thu theo tháng',
+                    subtitle: 'Hệ thống chưa cung cấp số liệu doanh thu theo từng tháng. '
+                        'Doanh thu dự kiến hiện tại xem ở thẻ "Doanh thu dự kiến / tháng".',
+                  )
+                : MonthlyRevenueChart(points: repo.revenuePoints);
 
             if (isWide) {
               return Row(
@@ -185,6 +283,14 @@ class DashboardPage extends StatelessWidget {
           health: repo.systemHealth,
           isLoading: repo.isSyncing,
           onRefresh: repo.refreshSystemHealth,
+          onServiceTap: (key, name, port, status) => ServiceEndpointsDialog.show(
+            context,
+            serviceKey: key,
+            name: name,
+            port: port,
+            healthStatus: status,
+            load: repo.fetchServiceEndpoints,
+          ),
         ),
 
         const SizedBox(height: AppSpacing.xxl),
@@ -225,6 +331,16 @@ class DashboardPage extends StatelessWidget {
               ),
               const SizedBox(height: AppSpacing.lg),
               const Divider(height: 1),
+              _SectionStatus(
+                key: const Key('dashboard_properties_status'),
+                state: propertySection,
+                isEmpty: repo.properties.isEmpty,
+                syncing: repo.isSyncing,
+                what: 'danh sách tòa nhà',
+                emptyText: 'Chưa có tòa nhà nào.',
+                padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg),
+                onRetry: canRetry ? retry : null,
+              ),
               for (var i = 0; i < repo.properties.length; i++) ...[
                 _PropertyOccupancyRow(
                   property: repo.properties[i],
@@ -276,6 +392,18 @@ class DashboardPage extends StatelessWidget {
                 ),
               ),
               const Divider(height: 1),
+              // Phân biệt: đang tải / không có hóa đơn (rỗng thật) / lỗi Billing / không có quyền.
+              _SectionStatus(
+                key: const Key('dashboard_invoices_status'),
+                state: invoiceSection,
+                isEmpty: repo.invoices.isEmpty,
+                syncing: repo.isSyncing,
+                what: 'danh sách hóa đơn',
+                emptyText: 'Chưa có hóa đơn nào.',
+                padding: const EdgeInsets.all(AppSpacing.xl),
+                onRetry: canRetry ? retry : null,
+              ),
+              if (repo.invoices.isNotEmpty)
               AppTable<InvoiceItem>(
                 items: repo.invoices,
                 onRowTap: (_) => context.go('/billing'),
@@ -378,7 +506,7 @@ class _PropertyOccupancyRow extends StatelessWidget {
                 ),
                 const SizedBox(height: AppSpacing.xxs),
                 Text(
-                  property.address,
+                  property.displayAddress,
                   style: AppTypography.caption,
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -470,15 +598,26 @@ class _PropertyOccupancyRow extends StatelessWidget {
 }
 
 
-/// Băng thông báo nguồn dữ liệu của Dashboard (dữ liệu mẫu / thiếu số liệu).
+/// Băng thông báo nguồn dữ liệu của Dashboard (đang tải / lỗi / thiếu số liệu).
 class _DataSourceBanner extends StatelessWidget {
   final String message;
   final bool isError;
+  final bool loading;
 
-  const _DataSourceBanner({required this.message, required this.isError});
+  /// Tải lại qua [AppDataRepository.syncWithBackend]; null = không hiện nút.
+  final VoidCallback? onRetry;
+
+  const _DataSourceBanner({
+    super.key,
+    required this.message,
+    required this.isError,
+    this.loading = false,
+    this.onRetry,
+  });
 
   @override
   Widget build(BuildContext context) {
+    final fg = isError ? AppColors.errorText : AppColors.warningText;
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.only(bottom: AppSpacing.lg),
@@ -488,9 +627,96 @@ class _DataSourceBanner extends StatelessWidget {
         borderRadius: BorderRadius.circular(AppSpacing.inputRadius),
         border: Border.all(color: isError ? AppColors.errorBorder : AppColors.warningBorder),
       ),
-      child: Text(
-        message.trim(),
-        style: AppTypography.caption.copyWith(color: isError ? AppColors.errorText : AppColors.warningText),
+      child: Row(
+        children: [
+          if (loading) ...[
+            SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: fg)),
+            const SizedBox(width: AppSpacing.sm),
+          ],
+          Expanded(
+            child: Text(message.trim(), style: AppTypography.caption.copyWith(color: fg)),
+          ),
+          if (onRetry != null) ...[
+            const SizedBox(width: AppSpacing.sm),
+            TextButton.icon(
+              onPressed: onRetry,
+              icon: const Icon(Icons.refresh_rounded, size: 18),
+              label: const Text('Thử lại'),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Trạng thái một danh sách trên Dashboard theo [SectionState] của repository:
+/// đang tải / rỗng thật / lỗi (kèm thử lại) / không có quyền. Khi danh sách có dữ liệu cũ mà
+/// lần tải mới lỗi thì báo dữ liệu có thể chưa cập nhật. Có dữ liệu bình thường -> không hiển thị gì.
+class _SectionStatus extends StatelessWidget {
+  final SectionState state;
+  final bool isEmpty;
+  final bool syncing;
+  final String what;
+  final String emptyText;
+  final EdgeInsets padding;
+  final VoidCallback? onRetry;
+
+  const _SectionStatus({
+    super.key,
+    required this.state,
+    required this.isEmpty,
+    required this.syncing,
+    required this.what,
+    required this.emptyText,
+    required this.padding,
+    this.onRetry,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final String text;
+    var isError = false;
+    var loading = false;
+    if (!isEmpty) {
+      if (!state.isError) return const SizedBox.shrink();
+      text = 'Không cập nhật được $what: ${state.message ?? 'lỗi không xác định'}. '
+          'Đang hiển thị dữ liệu của lần tải trước.';
+      isError = true;
+    } else if (state.isForbidden) {
+      text = 'Tài khoản của bạn không có quyền xem $what.';
+    } else if (state.isError) {
+      text = 'Không tải được $what: ${state.message ?? 'lỗi không xác định'}';
+      isError = true;
+    } else if (state.isLoaded) {
+      text = emptyText;
+    } else if (state.isLoading || syncing) {
+      text = 'Đang tải $what...';
+      loading = true;
+    } else {
+      text = 'Chưa tải được $what.';
+    }
+    final style = AppTypography.caption.copyWith(color: isError ? AppColors.errorText : null);
+    return Padding(
+      padding: padding,
+      child: Row(
+        children: [
+          if (loading) ...[
+            const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
+            const SizedBox(width: AppSpacing.sm),
+          ],
+          if (isError) ...[
+            const Icon(Icons.error_outline_rounded, size: 16, color: AppColors.error),
+            const SizedBox(width: AppSpacing.sm),
+          ],
+          Expanded(child: Text(text, style: style)),
+          if (isError && onRetry != null)
+            TextButton.icon(
+              onPressed: onRetry,
+              icon: const Icon(Icons.refresh_rounded, size: 18),
+              label: const Text('Thử lại'),
+            ),
+        ],
       ),
     );
   }

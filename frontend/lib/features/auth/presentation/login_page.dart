@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../../../core/constants/api_constants.dart';
@@ -22,6 +23,20 @@ class _LoginPageState extends State<LoginPage> {
   final _usernameCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
   bool _obscure = true;
+  List<Map<String, dynamic>> _devAccounts = const [];
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadDevAccounts());
+  }
+
+  Future<void> _loadDevAccounts() async {
+    if (!mounted) return;
+    final accounts = await context.read<AuthProvider>().fetchTestAccounts();
+    if (!mounted || accounts.isEmpty) return;
+    setState(() => _devAccounts = accounts);
+  }
 
   @override
   void dispose() {
@@ -34,6 +49,12 @@ class _LoginPageState extends State<LoginPage> {
     if (!(_formKey.currentState?.validate() ?? false)) return;
     // Router tự chuyển sang /dashboard khi AuthProvider báo đã đăng nhập.
     await context.read<AuthProvider>().login(_usernameCtrl.text, _passwordCtrl.text);
+  }
+
+  Future<void> _quickLogin(String username, String password) async {
+    _usernameCtrl.text = username;
+    _passwordCtrl.text = password;
+    await context.read<AuthProvider>().login(username, password);
   }
 
   @override
@@ -114,6 +135,49 @@ class _LoginPageState extends State<LoginPage> {
                       isLoading: auth.isLoading,
                       onPressed: auth.isLoading ? null : _submit,
                     ),
+                    const SizedBox(height: AppSpacing.sm),
+                    Wrap(
+                      alignment: WrapAlignment.center,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        const Text('Chưa có tài khoản?', style: AppTypography.caption),
+                        TextButton(
+                          key: const Key('login_go_register'),
+                          onPressed: auth.isLoading ? null : () => context.go('/register'),
+                          child: const Text('Đăng ký'),
+                        ),
+                      ],
+                    ),
+                    if (_devAccounts.isNotEmpty) ...[
+                      const SizedBox(height: AppSpacing.lg),
+                      const Divider(height: 1),
+                      const SizedBox(height: AppSpacing.md),
+                      const Text(
+                        'Đăng nhập nhanh (Môi trường Dev)',
+                        textAlign: TextAlign.center,
+                        style: AppTypography.labelSm,
+                      ),
+                      const SizedBox(height: AppSpacing.sm),
+                      Wrap(
+                        alignment: WrapAlignment.center,
+                        spacing: AppSpacing.sm,
+                        runSpacing: AppSpacing.sm,
+                        children: [
+                          for (final acc in _devAccounts)
+                            AppButton(
+                              label: '${acc['username']} (${acc['role']})',
+                              compact: true,
+                              variant: AppButtonVariant.outlined,
+                              onPressed: auth.isLoading
+                                  ? null
+                                  : () => _quickLogin(
+                                        '${acc['username'] ?? ''}',
+                                        '${acc['password'] ?? ''}',
+                                      ),
+                            ),
+                        ],
+                      ),
+                    ],
                     const SizedBox(height: AppSpacing.lg),
                     Text(
                       'API Gateway: ${ApiConstants.gatewayUrl}',

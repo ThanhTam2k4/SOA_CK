@@ -185,3 +185,69 @@ class IdentityPermissionPolicyTests(TestCase):
             res = APIClient().get('/api/auth/test-users/')
             self.assertEqual(res.status_code, status.HTTP_200_OK)
             self.assertNotIn('ADMIN', [a['role'] for a in res.data['test_accounts']])
+
+
+class PublicRegisterTests(TestCase):
+    """Chặng 3 — Đăng ký công khai POST /api/auth/register/ (màn hình RegisterPage)."""
+    databases = {'default'}
+    URL = '/api/auth/register/'
+
+    def setUp(self):
+        self.client = APIClient()
+        User.objects.create_user(username='dangco', password='abcdef12', email='dangco@test.vn')
+
+    def _post(self, **data):
+        return self.client.post(self.URL, data, format='json')
+
+    def test_register_landlord_success_hashes_password(self):
+        res = self._post(username='chumoi', password='abcdef12', email='chumoi@test.vn', first_name='Nguyễn Văn',
+                         last_name='B', phone_number='0901234567', role=UserRole.LANDLORD)
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED, res.data)
+        self.assertNotIn('password', res.data)
+        user = User.objects.get(username='chumoi')
+        self.assertEqual(user.role, UserRole.LANDLORD)
+        self.assertNotEqual(user.password, 'abcdef12')
+        self.assertTrue(user.check_password('abcdef12'))
+        self.assertFalse(user.is_staff)
+        self.assertFalse(user.is_superuser)
+        self.assertEqual(user.phone_number, '0901234567')
+
+    def test_register_tenant_success_and_can_login(self):
+        res = self._post(username='khachmoi', password='abcdef12', role=UserRole.TENANT)
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED, res.data)
+        self.assertEqual(User.objects.get(username='khachmoi').role, UserRole.TENANT)
+        login = self.client.post('/api/auth/login/', {'username': 'khachmoi', 'password': 'abcdef12'}, format='json')
+        self.assertEqual(login.status_code, status.HTTP_200_OK)
+        self.assertEqual(login.data['user']['role'], UserRole.TENANT)
+
+    def test_register_duplicate_username(self):
+        res = self._post(username='dangco', password='abcdef12')
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('username', res.data)
+        self.assertEqual(User.objects.filter(username='dangco').count(), 1)
+
+    def test_register_duplicate_email_case_insensitive(self):
+        res = self._post(username='nguoikhac', password='abcdef12', email='DangCo@Test.vn')
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('email', res.data)
+        self.assertFalse(User.objects.filter(username='nguoikhac').exists())
+
+    def test_register_without_email_allowed_multiple_times(self):
+        for name in ('khongmail1', 'khongmail2'):
+            self.assertEqual(self._post(username=name, password='abcdef12').status_code, status.HTTP_201_CREATED)
+
+    def test_register_invalid_password_and_email(self):
+        res = self._post(username='ngan', password='abc')
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('password', res.data)
+        res = self._post(username='saimail', password='abcdef12', email='khong-phai-email')
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('email', res.data)
+        self.assertFalse(User.objects.filter(username__in=['ngan', 'saimail']).exists())
+
+    def test_register_admin_staff_rejected(self):
+        for role in (UserRole.ADMIN, UserRole.STAFF):
+            res = self._post(username=f'tu_{role.lower()}', password='abcdef12', role=role)
+            self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+            self.assertIn('role', res.data)
+        self.assertFalse(User.objects.filter(username__startswith='tu_').exists())
