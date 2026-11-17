@@ -147,6 +147,23 @@ SIMPLE_JWT = {
 }
 
 
+# ==============================================================================
+# SERVICE-TO-SERVICE & SPRINT FEATURE LOCK
+# ==============================================================================
+# Địa chỉ nội bộ các service (kiểm tra quyền sở hữu dữ liệu chéo service, xem common/service_client.py).
+SERVICE_URLS = {
+    'identity': os.getenv('IDENTITY_SERVICE_URL', 'http://127.0.0.1:8001'),
+    'property': os.getenv('PROPERTY_SERVICE_URL', 'http://127.0.0.1:8002'),
+    'tenant': os.getenv('TENANT_SERVICE_URL', 'http://127.0.0.1:8003'),
+    'contract': os.getenv('CONTRACT_SERVICE_URL', 'http://127.0.0.1:8004'),
+    'billing': os.getenv('BILLING_SERVICE_URL', 'http://127.0.0.1:8005'),
+}
+INTER_SERVICE_TIMEOUT = float(os.getenv('INTER_SERVICE_TIMEOUT', '3'))
+
+# D3: khóa các API nghiệp vụ chưa thuộc Sprint hiện tại (xem common/sprint.py). Mặc định BẬT khóa.
+SPRINT_FEATURE_LOCK = os.getenv('SPRINT_FEATURE_LOCK', 'True').strip().lower() in ('1', 'true', 'yes')
+
+
 def spectacular_settings(title, description):
     return {
         'TITLE': title,

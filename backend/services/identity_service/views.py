@@ -6,7 +6,10 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.db.models import Q
 from django.http import Http404
+
+from common import service_client
 from .models import UserRole
 from .serializers import (
     UserSerializer,
@@ -86,8 +89,10 @@ class UserViewSet(viewsets.ModelViewSet):
     """
     SERVICE 1 — IDENTITY: Quản lý danh sách người dùng và phân quyền (ADMIN / LANDLORD)
     - ADMIN    : toàn quyền (tạo/sửa/xóa, đổi role, khóa tài khoản)
-    - LANDLORD : xem danh sách TENANT + chính mình, tạo tài khoản TENANT, sửa thông tin
-                 liên hệ của TENANT; không được đổi role/is_active, không được xóa.
+    - LANDLORD : chỉ xem/sửa thông tin liên hệ của TENANT thuộc phạm vi nhà trọ của mình
+                 (tài khoản có hồ sơ người thuê do mình quản lý ở Tenant Service, chưa chuyển đi)
+                 + chính mình; tạo tài khoản TENANT; không được đổi role/is_active, không được xóa.
+    - STAFF (legacy) / TENANT: không truy cập.
     """
     serializer_class = UserSerializer
     permission_classes = [IsLandlordOrAdmin]
@@ -103,17 +108,28 @@ class UserViewSet(viewsets.ModelViewSet):
             raise ValidationError({'detail': 'Không thể tự xóa tài khoản của chính mình.'})
         instance.delete()
 
+    def _landlord_tenant_user_ids(self):
+        """
+        user_id các TENANT thuộc phạm vi chủ trọ: lấy từ Tenant Service (/api/tenants/links/) bằng JWT
+        của chính chủ trọ -> Tenant Service chỉ trả hồ sơ có landlord_id = chủ trọ này.
+        Tenant Service lỗi -> 503 (không mặc định cho phép).
+        """
+        links = service_client.fetch_tenant_links(service_client.auth_header_from_request(self.request))
+        return {int(link['user_id']) for link in links
+                if link.get('user_id') and link.get('status') != service_client.MOVED_OUT_STATUS}
+
     def get_queryset(self):
         user = self.request.user
         role_filter = self.request.query_params.get('role')
         queryset = User.objects.all()
 
+        if not (user.is_superuser or user.role == UserRole.ADMIN):
+            # LANDLORD: chỉ TENANT trong phạm vi nhà trọ của mình + chính mình.
+            queryset = queryset.filter(
+                Q(role=UserRole.TENANT, id__in=self._landlord_tenant_user_ids()) | Q(id=user.id))
+
         if role_filter:
             queryset = queryset.filter(role=role_filter)
-
-        # Nếu là Landlord thông thường, chỉ xem danh sách khách thuê (TENANT) hoặc chính mình
-        if user.role == UserRole.LANDLORD and not user.is_superuser:
-            queryset = queryset.filter(role=UserRole.TENANT) | User.objects.filter(id=user.id)
 
         return queryset
 

@@ -19,14 +19,4 @@ class IsLandlordOrAdmin(permissions.BasePermission):
             (request.user.role in [UserRole.ADMIN, UserRole.LANDLORD] or request.user.is_superuser)
         )
 
-class IsStaffOrLandlordOrAdmin(permissions.BasePermission):
-    """
-    Cho phép Nhân viên, Chủ trọ hoặc Admin.
-    """
-    def has_permission(self, request, view):
-        return bool(
-            request.user and 
-            request.user.is_authenticated and 
-            (request.user.role in [UserRole.ADMIN, UserRole.LANDLORD, UserRole.STAFF] or request.user.is_superuser)
-        )
 

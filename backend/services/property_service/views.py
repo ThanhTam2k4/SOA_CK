@@ -8,8 +8,9 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from common.auth import (
-    IsManagerOrReadOnly, IsManagerRole, get_user_id, is_admin_or_staff, is_landlord, is_manager,
+    IsManagerOrReadOnly, IsManagerRole, get_user_id, is_admin, is_landlord, is_manager,
 )
+from common.service_client import own_rented_room_ids
 from .models import (
     RENTED_STATUSES,
     MaintenanceHistory,
@@ -59,31 +60,32 @@ def _parse_number(value, cast, field):
 def scoped_properties(user):
     """
     Phân quyền dữ liệu nhà trọ dựa trên claims JWT (Identity Service):
-    - ADMIN / STAFF : toàn bộ hệ thống
-    - LANDLORD      : nhà trọ mình sở hữu (owner_id)
-    - TENANT        : chỉ nhà trọ đang hoạt động còn phòng trống (xem để tìm phòng)
+    - ADMIN    : toàn bộ hệ thống
+    - LANDLORD : nhà trọ mình sở hữu (owner_id)
+    - TENANT (và STAFF legacy): chỉ nhà trọ chứa phòng mình ĐANG thuê
+      (room_id lấy từ Tenant Service theo user_id trong JWT; không xác định được -> 503, không trả dữ liệu).
     """
     queryset = Property.objects.all()
-    if is_admin_or_staff(user):
+    if is_admin(user):
         return queryset
     if is_landlord(user):
         return queryset.filter(owner_id=get_user_id(user))
-    return queryset.filter(status=PropertyStatus.ACTIVE, rooms__status=RoomStatus.AVAILABLE).distinct()
+    return queryset.filter(rooms__id__in=own_rented_room_ids(user)).distinct()
 
 
 def scoped_rooms(user):
     queryset = Room.objects.select_related('property')
-    if is_admin_or_staff(user):
+    if is_admin(user):
         return queryset
     if is_landlord(user):
         return queryset.filter(property__owner_id=get_user_id(user))
-    # TENANT: chỉ xem phòng của nhà trọ đang hoạt động (không lộ phòng đã ngừng/xóa).
-    return queryset.filter(property__status=PropertyStatus.ACTIVE).exclude(status=RoomStatus.INACTIVE)
+    # TENANT: chỉ phòng mình đang thuê (không còn xem toàn bộ phòng như chức năng tìm phòng).
+    return queryset.filter(id__in=own_rented_room_ids(user))
 
 
 def scoped_maintenance(user):
     queryset = MaintenanceRequest.objects.select_related('room', 'room__property')
-    if is_admin_or_staff(user):
+    if is_admin(user):
         return queryset
     if is_landlord(user):
         return queryset.filter(room__property__owner_id=get_user_id(user))
@@ -119,7 +121,7 @@ class PropertyViewSet(viewsets.ModelViewSet):
     1.7 Lọc nhà trọ (?status=ACTIVE|INACTIVE|DELETED, ?district=, ?ward=)
     - /{id}/rooms/, /{id}/stats/, /{id}/room_matrix/
     - /summary/  thống kê tổng hợp theo phạm vi user (Dashboard qua Gateway)
-    Ghi (POST/PUT/PATCH/DELETE) chỉ dành cho ADMIN/STAFF/LANDLORD.
+    Ghi (POST/PUT/PATCH/DELETE) chỉ dành cho ADMIN/LANDLORD.
     """
     serializer_class = PropertySerializer
     permission_classes = [IsManagerOrReadOnly]
@@ -219,8 +221,9 @@ class PropertyViewSet(viewsets.ModelViewSet):
             rooms = rooms.filter(status=status_filter.upper())
         return Response(self._room_data(rooms))
 
-    @action(detail=True, methods=['get'], url_path='stats')
+    @action(detail=True, methods=['get'], url_path='stats', permission_classes=[IsManagerRole])
     def stats(self, request, pk=None):
+        """Thống kê một nhà trọ (doanh thu, tỉ lệ lấp đầy) — chỉ ADMIN/LANDLORD."""
         property_obj = self.get_object()
         rooms = property_obj.rooms.all()
         counts = {row['status']: row['n'] for row in rooms.values('status').annotate(n=Count('id'))}
@@ -318,7 +321,7 @@ class RoomViewSet(viewsets.ModelViewSet):
     IV. TÌM KIẾM PHÒNG (Tên phòng, Mã phòng, Tên nhà trọ, Khu vực, Địa chỉ)
     V. LỌC PHÒNG (Giá phòng, Diện tích, Số người tối đa, Trạng thái, Vị trí/Khu vực)
     VI. SẮP XẾP DANH SÁCH PHÒNG (Giá tăng/giảm, Diện tích tăng/giảm, Tên phòng, Ngày tạo)
-    Ghi chỉ dành cho ADMIN/STAFF/LANDLORD; LANDLORD chỉ thao tác trên nhà trọ của mình.
+    Ghi chỉ dành cho ADMIN/LANDLORD; LANDLORD chỉ thao tác trên nhà trọ của mình.
     """
     serializer_class = RoomSerializer
     permission_classes = [IsManagerOrReadOnly]
@@ -571,7 +574,7 @@ class MaintenanceRequestViewSet(viewsets.ModelViewSet):
     7.6 Ghi nhận chi phí bảo trì (POST /maintenance/{id}/record_cost/) — quản lý
     7.7 Hoàn thành bảo trì (POST /maintenance/{id}/complete/) — quản lý
     7.8 Xem lịch sử bảo trì (GET /maintenance/{id}/history/ & /maintenance-history/)
-    Phạm vi dữ liệu: ADMIN/STAFF toàn bộ; LANDLORD nhà trọ của mình; TENANT yêu cầu do mình báo.
+    Phạm vi dữ liệu: ADMIN toàn bộ; LANDLORD nhà trọ của mình; TENANT yêu cầu do mình báo.
     """
     serializer_class = MaintenanceRequestSerializer
     permission_classes = [permissions.IsAuthenticated]

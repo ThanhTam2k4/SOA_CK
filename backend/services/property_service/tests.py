@@ -1,8 +1,11 @@
+from unittest import mock
+
+import requests
 from django.test import TestCase
 from rest_framework import status
 from rest_framework.test import APIClient
 
-from common.testing import jwt_client
+from common.testing import fake_http_response, jwt_client, patch_tenant_links, tenant_link
 from services.property_service.models import (
     MaintenanceHistory, MaintenanceRequest, MaintenanceStatus, Property, PropertyStatus, Room, RoomStatus,
 )
@@ -195,7 +198,9 @@ class PropertyServiceTests(TestCase):
         self.room.tenant_name = 'Nguyễn Văn A'
         self.room.tenant_phone = '0900000000'
         self.room.save()
-        res = jwt_client(555, 'TENANT').get(f'/api/rooms/{self.room.id}/')
+        # TENANT 555 đang thuê phòng này (liên kết lấy từ Tenant Service).
+        with patch_tenant_links({555: [tenant_link(1, 555, room_id=self.room.id, landlord_id=LANDLORD_ID)]}):
+            res = jwt_client(555, 'TENANT').get(f'/api/rooms/{self.room.id}/')
         self.assertEqual(res.status_code, status.HTTP_200_OK)
         self.assertNotIn('tenant_phone', res.data)
         self.assertNotIn('tenant_name', res.data)
@@ -262,6 +267,9 @@ class PropertyServiceTests(TestCase):
         self.assertEqual(self.room.status, RoomStatus.AVAILABLE)
 
     def test_tenant_can_report_but_not_manage_maintenance(self):
+        patcher = patch_tenant_links({777: [tenant_link(1, 777, room_id=self.room.id, landlord_id=LANDLORD_ID)]})
+        patcher.start()
+        self.addCleanup(patcher.stop)
         tenant = jwt_client(777, 'TENANT')
         res = tenant.post('/api/maintenance/', {'room': self.room.id, 'title': 'Rò nước'}, format='json')
         self.assertEqual(res.status_code, status.HTTP_201_CREATED)
@@ -309,3 +317,111 @@ class PropertyServiceTests(TestCase):
         res = anon.get('/health/')
         self.assertEqual(res.status_code, status.HTTP_200_OK)
         self.assertEqual(res.data['port'], 8002)
+
+
+class PropertyRoleScopeTests(TestCase):
+    """W3: TENANT chỉ xem phòng mình đang thuê; ADMIN toàn hệ thống; LANDLORD chỉ dữ liệu của mình; STAFF hẹp nhất."""
+    LANDLORD_A, LANDLORD_B, TENANT_ID = 101, 202, 555
+
+    def setUp(self):
+        self.p1 = Property.objects.create(code='PA', owner_id=self.LANDLORD_A, name='Nhà A', address='A')
+        self.p2 = Property.objects.create(code='PB', owner_id=self.LANDLORD_B, name='Nhà B', address='B')
+        self.r1 = Room.objects.create(code='PA-1', property=self.p1, room_number='1', rent_price=1000,
+                                      status=RoomStatus.OCCUPIED, current_occupants=1, max_occupants=2)
+        self.r2 = Room.objects.create(code='PA-2', property=self.p1, room_number='2', rent_price=1000,
+                                      status=RoomStatus.AVAILABLE)
+        self.r3 = Room.objects.create(code='PB-1', property=self.p2, room_number='1', rent_price=1000,
+                                      status=RoomStatus.AVAILABLE)
+        self.links = {self.TENANT_ID: [tenant_link(7, self.TENANT_ID, room_id=self.r1.id,
+                                                   landlord_id=self.LANDLORD_A)]}
+
+    def ids(self, res):
+        self.assertEqual(res.status_code, status.HTTP_200_OK, getattr(res, 'data', None))
+        return sorted(item['id'] for item in res.data)
+
+    def test_admin_sees_whole_system(self):
+        admin = jwt_client(1, 'ADMIN')
+        self.assertEqual(self.ids(admin.get('/api/properties/')), sorted([self.p1.id, self.p2.id]))
+        self.assertEqual(self.ids(admin.get('/api/rooms/')), sorted([self.r1.id, self.r2.id, self.r3.id]))
+
+    def test_landlord_isolated_from_other_landlord(self):
+        a = jwt_client(self.LANDLORD_A, 'LANDLORD')
+        self.assertEqual(self.ids(a.get('/api/properties/')), [self.p1.id])
+        self.assertEqual(self.ids(a.get('/api/rooms/')), sorted([self.r1.id, self.r2.id]))
+        self.assertEqual(a.get(f'/api/properties/{self.p2.id}/').status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(a.get(f'/api/rooms/{self.r3.id}/').status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(a.patch(f'/api/rooms/{self.r3.id}/', {'rent_price': 1}, format='json').status_code,
+                         status.HTTP_404_NOT_FOUND)
+        self.assertEqual(a.delete(f'/api/properties/{self.p2.id}/').status_code, status.HTTP_404_NOT_FOUND)
+        res = a.post('/api/rooms/', {'property': self.p2.id, 'room_number': '9', 'rent_price': 1}, format='json')
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(self.ids(a.get(f'/api/rooms/?property_id={self.p2.id}')), [])
+
+    def test_tenant_sees_only_rented_room(self):
+        tenant = jwt_client(self.TENANT_ID, 'TENANT')
+        with patch_tenant_links(self.links):
+            self.assertEqual(self.ids(tenant.get('/api/rooms/')), [self.r1.id])
+            self.assertEqual(self.ids(tenant.get('/api/properties/')), [self.p1.id])
+            self.assertEqual(tenant.get(f'/api/rooms/{self.r1.id}/').status_code, status.HTTP_200_OK)
+            # Phòng khác cùng nhà / nhà khác: không lộ, kể cả khi đổi ID trên URL hoặc tham số lọc.
+            for room in (self.r2, self.r3):
+                self.assertEqual(tenant.get(f'/api/rooms/{room.id}/').status_code, status.HTTP_404_NOT_FOUND)
+            self.assertEqual(tenant.get(f'/api/properties/{self.p2.id}/').status_code, status.HTTP_404_NOT_FOUND)
+            self.assertEqual(self.ids(tenant.get(f'/api/rooms/?property_id={self.p2.id}')), [])
+            self.assertEqual(self.ids(tenant.get('/api/rooms/available/')), [])
+            summary = tenant.get('/api/properties/summary/').data
+            self.assertEqual((summary['total_properties'], summary['total_rooms']), (1, 1))
+            self.assertNotIn('estimated_monthly_revenue', summary)
+            # Thống kê doanh thu nhà trọ chỉ dành cho quản lý.
+            self.assertEqual(tenant.get(f'/api/properties/{self.p1.id}/stats/').status_code,
+                             status.HTTP_403_FORBIDDEN)
+
+    def test_tenant_cannot_write_property_or_room(self):
+        tenant = jwt_client(self.TENANT_ID, 'TENANT')
+        with patch_tenant_links(self.links):
+            self.assertEqual(tenant.post('/api/properties/', {'name': 'X', 'address': 'Y'}, format='json')
+                             .status_code, status.HTTP_403_FORBIDDEN)
+            self.assertEqual(tenant.post('/api/rooms/', {'property': self.p1.id, 'room_number': 'X'}, format='json')
+                             .status_code, status.HTTP_403_FORBIDDEN)
+            self.assertEqual(tenant.patch(f'/api/rooms/{self.r1.id}/', {'rent_price': 1}, format='json')
+                             .status_code, status.HTTP_403_FORBIDDEN)
+            self.assertEqual(tenant.delete(f'/api/rooms/{self.r1.id}/').status_code, status.HTTP_403_FORBIDDEN)
+            self.assertEqual(tenant.patch(f'/api/rooms/{self.r1.id}/status/', {'status': 'AVAILABLE'}, format='json')
+                             .status_code, status.HTTP_403_FORBIDDEN)
+        self.r1.refresh_from_db()
+        self.assertEqual(self.r1.status, RoomStatus.OCCUPIED)
+
+    def test_tenant_without_active_link_sees_nothing(self):
+        moved = {self.TENANT_ID: [tenant_link(7, self.TENANT_ID, room_id=self.r1.id, status='MOVED_OUT')]}
+        tenant = jwt_client(self.TENANT_ID, 'TENANT')
+        for links in (moved, {}):
+            with patch_tenant_links(links):
+                self.assertEqual(self.ids(tenant.get('/api/rooms/')), [])
+                self.assertEqual(self.ids(tenant.get('/api/properties/')), [])
+                self.assertEqual(tenant.get(f'/api/rooms/{self.r1.id}/').status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_staff_is_not_admin(self):
+        staff = jwt_client(300, 'STAFF')
+        with patch_tenant_links({}):
+            self.assertEqual(self.ids(staff.get('/api/properties/')), [])
+            self.assertEqual(self.ids(staff.get('/api/rooms/')), [])
+            self.assertEqual(staff.post('/api/properties/', {'name': 'X', 'address': 'Y'}, format='json')
+                             .status_code, status.HTTP_403_FORBIDDEN)
+            self.assertEqual(staff.get(f'/api/properties/{self.p1.id}/stats/').status_code,
+                             status.HTTP_403_FORBIDDEN)
+
+    def test_tenant_lookup_uses_tenant_service_with_own_jwt(self):
+        tenant = jwt_client(self.TENANT_ID, 'TENANT')
+        body = self.links[self.TENANT_ID]
+        with mock.patch('common.service_client.requests.get', return_value=fake_http_response(200, body)) as fake:
+            self.assertEqual(self.ids(tenant.get('/api/rooms/')), [self.r1.id])
+        self.assertEqual(fake.call_count, 1)
+        self.assertEqual(fake.call_args.args[0], 'http://127.0.0.1:8003/api/tenants/links/')
+        self.assertTrue(fake.call_args.kwargs['headers']['Authorization'].startswith('Bearer '))
+
+    def test_tenant_service_down_fails_closed(self):
+        tenant = jwt_client(self.TENANT_ID, 'TENANT')
+        with mock.patch('common.service_client.requests.get', side_effect=requests.exceptions.ConnectionError()):
+            self.assertEqual(tenant.get('/api/rooms/').status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+        with mock.patch('common.service_client.requests.get', return_value=fake_http_response(200, {'bad': 1})):
+            self.assertEqual(tenant.get('/api/properties/').status_code, status.HTTP_503_SERVICE_UNAVAILABLE)

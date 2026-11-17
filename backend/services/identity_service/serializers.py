@@ -59,6 +59,11 @@ class UserSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         requester = self._requester()
+        # STAFF chỉ còn để tương thích dữ liệu cũ: không ai được cấp mới vai trò này.
+        new_role = attrs.get('role')
+        if new_role == UserRole.STAFF and (self.instance is None or self.instance.role != UserRole.STAFF):
+            raise serializers.ValidationError(
+                {'role': 'Vai trò STAFF đã ngừng sử dụng. Chọn ADMIN, LANDLORD hoặc TENANT.'})
         if _is_admin(requester):
             return attrs
 

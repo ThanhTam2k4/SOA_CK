@@ -180,7 +180,8 @@ _BILLING_SCHEMA = {
 
 class ServiceEndpointsTests(SimpleTestCase):
     def _get(self, key, **patch_kwargs):
-        with mock.patch('gateway.client.get_json', **patch_kwargs) as fake:
+        # Quyền ADMIN được kiểm tra riêng ở ServiceEndpointsAdminGuardTests.
+        with mock.patch('gateway.views.require_admin', return_value=None),                 mock.patch('gateway.client.get_json', **patch_kwargs) as fake:
             res = self.client.get(f'/api/system/services/{key}/endpoints/')
         return res, fake
 
@@ -238,3 +239,48 @@ class ServiceEndpointsTests(SimpleTestCase):
         res, fake = self._get('payment', return_value=_resp(200, {}))
         self.assertEqual(res.status_code, 404)
         fake.assert_not_called()
+
+
+class ServiceEndpointsAdminGuardTests(SimpleTestCase):
+    """W5: danh sách endpoint nội bộ chỉ dành cho ADMIN (role xác minh qua Identity /api/auth/me/)."""
+    URL = '/api/system/services/identity/endpoints/'
+
+    def _call(self, me_resp=None, side_effect=None, token='Bearer t'):
+        def fake_get(url, headers=None, timeout=None):
+            if url.endswith('/api/auth/me/'):
+                if side_effect:
+                    raise side_effect
+                return me_resp
+            return _resp(200, {'paths': {}})
+        headers = {'HTTP_AUTHORIZATION': token} if token else {}
+        with mock.patch('gateway.client.get_json', side_effect=fake_get) as fake:
+            return self.client.get(self.URL, **headers), fake
+
+    def test_anonymous_401_without_calling_services(self):
+        res, fake = self._call(token=None)
+        self.assertEqual(res.status_code, 401)
+        fake.assert_not_called()
+
+    def test_invalid_token_401(self):
+        self.assertEqual(self._call(_resp(401, {'detail': 'x'}))[0].status_code, 401)
+
+    def test_landlord_tenant_staff_forbidden(self):
+        for role in ('LANDLORD', 'TENANT', 'STAFF'):
+            res, fake = self._call(_resp(200, {'id': 2, 'role': role}))
+            self.assertEqual(res.status_code, 403, role)
+            # Không đọc schema của service khi không đủ quyền.
+            self.assertEqual(fake.call_count, 1)
+
+    def test_admin_allowed(self):
+        res, fake = self._call(_resp(200, {'id': 1, 'role': 'ADMIN'}))
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(fake.call_args_list[0].args[0], 'http://127.0.0.1:8001/api/auth/me/')
+        self.assertEqual(fake.call_args_list[0].kwargs['headers'], {'Authorization': 'Bearer t'})
+
+    def test_identity_down_fails_closed_503(self):
+        res, _ = self._call(side_effect=requests.exceptions.ConnectionError())
+        self.assertEqual(res.status_code, 503)
+
+    def test_health_stays_public(self):
+        with mock.patch('gateway.client.get_json', return_value=_resp(200, {'status': 'UP'})):
+            self.assertEqual(self.client.get('/api/system/health/').status_code, 200)

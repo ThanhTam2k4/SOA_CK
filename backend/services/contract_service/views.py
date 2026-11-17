@@ -8,24 +8,27 @@ from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from common.auth import IsManagerRole, get_user_id, is_admin_or_staff, is_landlord
+from common.auth import IsManagerRole, get_user_id, is_admin, is_landlord
+from common.service_client import own_tenant_ids
+from common.sprint import SprintFeatureLock
 from .models import Contract, ContractEvent, ContractEventType, ContractStatus
 from .serializers import ContractEventSerializer, ContractSerializer
 
 
 def scoped_contracts(user):
     """
-    - ADMIN / STAFF : toàn bộ
-    - LANDLORD      : hợp đồng do mình lập (landlord_id)
-    - TENANT        : không liệt kê (mapping tài khoản -> hồ sơ người thuê thuộc Tenant Service;
-      sẽ bổ sung endpoint "hợp đồng của tôi" khi có tích hợp Tenant Service)
+    - ADMIN         : toàn bộ
+    - LANDLORD      : hợp đồng do mình lập (landlord_id = user_id trong JWT)
+    - TENANT (và STAFF legacy): hợp đồng có tenant_id thuộc hồ sơ người thuê gắn với user_id của mình.
+      Contract.tenant_id là ID hồ sơ ở Tenant Service (KHÔNG phải user_id) -> tra qua
+      Tenant Service /api/tenants/links/ bằng JWT của người dùng; lỗi -> 503 (không trả dữ liệu).
     """
     queryset = Contract.objects.all()
-    if is_admin_or_staff(user):
+    if is_admin(user):
         return queryset
     if is_landlord(user):
         return queryset.filter(landlord_id=get_user_id(user))
-    return queryset.none()
+    return queryset.filter(tenant_id__in=own_tenant_ids(user))
 
 
 def _generate_contract_number():
@@ -35,19 +38,21 @@ def _generate_contract_number():
 class ContractViewSet(viewsets.ModelViewSet):
     """
     SERVICE 4 — CONTRACT SERVICE
-    - CRUD hợp đồng (lọc ?status=, ?room_id=, ?tenant_id=  -> lịch sử theo phòng / người thuê)
-    - POST /{id}/activate/   DRAFT -> ACTIVE
-    - POST /{id}/extend/     gia hạn: {new_end_date, rental_price?, note?}
-    - POST /{id}/terminate/  kết thúc: {terminated_at?, reason?}
+    - GET  /contracts/       danh sách (lọc ?status=, ?room_id=, ?tenant_id=) trong phạm vi người dùng
+    - GET  /{id}/            chi tiết
     - GET  /{id}/history/    lịch sử thay đổi
     - GET  /summary/         thống kê (Dashboard qua Gateway)
+    Tạm khóa (D3 — nghiệp vụ Sprint sau, source code giữ nguyên):
+    - POST/PUT/PATCH/DELETE hợp đồng, POST /{id}/activate/, /{id}/extend/, /{id}/terminate/
     """
     serializer_class = ContractSerializer
+    sprint_locked_actions = ('create', 'update', 'partial_update', 'destroy', 'activate', 'extend', 'terminate')
+    READ_ACTIONS = ('list', 'retrieve', 'history', 'summary')
 
     def get_permissions(self):
-        if self.action == 'summary':
-            return [permissions.IsAuthenticated()]
-        return [permissions.IsAuthenticated(), IsManagerRole()]
+        if self.action in self.READ_ACTIONS:
+            return [permissions.IsAuthenticated(), SprintFeatureLock()]
+        return [permissions.IsAuthenticated(), IsManagerRole(), SprintFeatureLock()]
 
     def get_queryset(self):
         queryset = scoped_contracts(self.request.user)

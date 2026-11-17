@@ -6,7 +6,9 @@ from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from common.auth import IsManagerRole, get_user_id, is_admin, is_admin_or_staff, is_landlord, is_manager
+from common.auth import IsManagerRole, get_user_id, is_admin, is_landlord, is_manager
+from common.service_client import own_tenant_ids
+from common.sprint import SprintFeatureLock
 from .models import Invoice, InvoiceStatus, Notification, NotificationCategory
 from .serializers import InvoiceSerializer, NotificationSerializer
 
@@ -14,12 +16,18 @@ UNPAID_STATUSES = (InvoiceStatus.UNPAID, InvoiceStatus.OVERDUE)
 
 
 def scoped_invoices(user):
+    """
+    - ADMIN         : toàn bộ
+    - LANDLORD      : hóa đơn do mình lập (landlord_id = user_id trong JWT)
+    - TENANT (và STAFF legacy): hóa đơn có tenant_id thuộc hồ sơ người thuê gắn với user_id của mình
+      (tra qua Tenant Service /api/tenants/links/; lỗi -> 503, không trả dữ liệu).
+    """
     queryset = Invoice.objects.all()
-    if is_admin_or_staff(user):
+    if is_admin(user):
         return queryset
     if is_landlord(user):
         return queryset.filter(landlord_id=get_user_id(user))
-    return queryset.none()
+    return queryset.filter(tenant_id__in=own_tenant_ids(user))
 
 
 def notify(user_id, title, content, category=NotificationCategory.SYSTEM, reference_id=None, created_by_id=None):
@@ -32,17 +40,19 @@ class InvoiceViewSet(viewsets.ModelViewSet):
     SERVICE 5 — BILLING
     - CRUD hóa đơn (tự tính tiền điện/nước theo chỉ số × đơn giá, tự tính tổng)
     - Lọc: ?status= (UNPAID/PAID/OVERDUE/CANCELLED/DEBT), ?room_id=, ?tenant_id=, ?contract_id=, ?month=&year=
-    - POST /{id}/pay/     đánh dấu đã thanh toán
-    - POST /{id}/cancel/  hủy hóa đơn
     - GET  /debt/         công nợ theo phòng
     - GET  /summary/      thống kê (Dashboard qua Gateway)
+    Tạm khóa (D3 — nghiệp vụ Sprint sau, source code giữ nguyên):
+    - POST/PUT/PATCH/DELETE hóa đơn (tạo/tính tiền), POST /{id}/pay/, POST /{id}/cancel/
     """
     serializer_class = InvoiceSerializer
+    sprint_locked_actions = ('create', 'update', 'partial_update', 'destroy', 'pay', 'cancel')
+    READ_ACTIONS = ('list', 'retrieve', 'debt', 'summary')
 
     def get_permissions(self):
-        if self.action == 'summary':
-            return [permissions.IsAuthenticated()]
-        return [permissions.IsAuthenticated(), IsManagerRole()]
+        if self.action in self.READ_ACTIONS:
+            return [permissions.IsAuthenticated(), SprintFeatureLock()]
+        return [permissions.IsAuthenticated(), IsManagerRole(), SprintFeatureLock()]
 
     def get_queryset(self):
         queryset = scoped_invoices(self.request.user)
@@ -138,17 +148,19 @@ class NotificationViewSet(viewsets.ModelViewSet):
     """
     SERVICE 5 — NOTIFICATION
     - GET  /notifications/              thông báo của tôi (?unread=1, ?category=); ?sent=1: thông báo tôi đã gửi
-    - POST /notifications/              gửi thông báo (ADMIN/STAFF/LANDLORD)
-    - POST /notifications/{id}/read/    đánh dấu đã đọc
+    - POST /notifications/{id}/read/    đánh dấu đã đọc (thông báo của mình)
     - POST /notifications/read-all/     đánh dấu tất cả đã đọc
+    - DELETE /notifications/{id}/       xóa (ADMIN/LANDLORD, trong phạm vi)
+    Tạm khóa (D3): POST /notifications/ (gửi thông báo) — nghiệp vụ Sprint sau.
     """
     serializer_class = NotificationSerializer
     http_method_names = ['get', 'post', 'delete', 'head', 'options']
+    sprint_locked_actions = ('create',)
 
     def get_permissions(self):
         if self.action in ('create', 'destroy'):
-            return [permissions.IsAuthenticated(), IsManagerRole()]
-        return [permissions.IsAuthenticated()]
+            return [permissions.IsAuthenticated(), IsManagerRole(), SprintFeatureLock()]
+        return [permissions.IsAuthenticated(), SprintFeatureLock()]
 
     def get_queryset(self):
         user = self.request.user

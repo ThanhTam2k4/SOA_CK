@@ -281,12 +281,43 @@ def parse_openapi_endpoints(schema, base_url, prefixes):
     return endpoints
 
 
+def require_admin(request):
+    """
+    Chỉ ADMIN: Gateway không tự giải mã JWT mà hỏi Identity Service (/api/auth/me/) bằng chính token
+    của người gọi -> role lấy từ database Identity (không tin dữ liệu client).
+    Trả về None nếu hợp lệ, ngược lại JsonResponse 401 / 403 / 503.
+    """
+    auth_header = request.headers.get('Authorization', '')
+    if not auth_header.startswith('Bearer '):
+        return _error(401, 'Cần đăng nhập (Authorization: Bearer <token>).')
+    identity = services()['identity']
+    try:
+        resp = client.get_json(f"{identity['url'].rstrip('/')}/api/auth/me/", headers={'Authorization': auth_header},
+                               timeout=settings.GATEWAY_HEALTH_TIMEOUT)
+    except requests.exceptions.RequestException:
+        return _error(503, 'Identity Service không phản hồi — không xác minh được quyền.', service='identity')
+    if resp.status_code == 401:
+        return _error(401, 'Phiên đăng nhập đã hết hạn hoặc token không hợp lệ.')
+    try:
+        me = resp.json() if resp.status_code == 200 else None
+    except ValueError:
+        me = None
+    if not isinstance(me, dict):
+        return _error(503, f'Không xác minh được quyền (Identity HTTP {resp.status_code}).', service='identity')
+    if me.get('role') != 'ADMIN':
+        return _error(403, 'Chỉ Quản trị viên (ADMIN) được xem danh sách endpoint nội bộ.')
+    return None
+
+
 def service_endpoints(request, key):
     """
-    GET /api/system/services/<key>/endpoints/
+    GET /api/system/services/<key>/endpoints/  (chỉ ADMIN)
     Thông tin kết nối + danh sách endpoint THỰC TẾ của 1 service (đọc OpenAPI của service đó).
     Service không phản hồi -> 200 với status DOWN, endpoints rỗng và lý do (như /api/system/health/).
     """
+    denied = require_admin(request)
+    if denied is not None:
+        return denied
     conf = services().get(key)
     if conf is None:
         return _error(404, f'Không có service "{key}".', available=list(services()))

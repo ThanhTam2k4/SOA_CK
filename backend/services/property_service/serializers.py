@@ -110,7 +110,7 @@ class RoomSerializer(serializers.ModelSerializer):
     maintenance_requests = MaintenanceRequestSerializer(many=True, read_only=True)
     active_maintenance_count = serializers.SerializerMethodField()
 
-    # Thông tin cá nhân người đang thuê chỉ hiển thị cho ADMIN/STAFF/LANDLORD.
+    # Thông tin cá nhân người đang thuê chỉ hiển thị cho ADMIN/LANDLORD.
     PRIVATE_FIELDS = ('tenant_name', 'tenant_phone', 'maintenance_requests')
 
     class Meta:

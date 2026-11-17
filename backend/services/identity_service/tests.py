@@ -1,9 +1,14 @@
+from unittest import mock
+
+import requests
 from django.test import TestCase
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
 from rest_framework import status
 from rest_framework_simplejwt.tokens import AccessToken
+from common.testing import fake_http_response, tenant_link
 from services.identity_service.models import UserRole
+from services.identity_service.serializers import CustomTokenObtainPairSerializer
 
 User = get_user_model()
 
@@ -101,6 +106,11 @@ class IdentityPermissionPolicyTests(TestCase):
                                                  role=UserRole.LANDLORD)
         self.tenant = User.objects.create_user(username='tenant_t', password='tenantpass123', role=UserRole.TENANT)
         self.client = APIClient()
+        # Tenant Service (giả lập): tenant_t là người thuê thuộc phạm vi của landlord_t.
+        patcher = mock.patch('common.service_client.fetch_tenant_links',
+                             return_value=[tenant_link(1, self.tenant.id, room_id=1, landlord_id=self.landlord.id)])
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def as_user(self, user):
         self.client.force_authenticate(user=user)
@@ -251,3 +261,92 @@ class PublicRegisterTests(TestCase):
             self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
             self.assertIn('role', res.data)
         self.assertFalse(User.objects.filter(username__startswith='tu_').exists())
+
+
+class IdentityRoleScopeTests(TestCase):
+    """W1 (STAFF) + W2 (LANDLORD chỉ quản lý TENANT thuộc phạm vi nhà trọ của mình)."""
+    databases = {'default'}
+
+    def setUp(self):
+        self.admin = User.objects.create_user(username='a1', password='adminpass123', role=UserRole.ADMIN)
+        self.landlord = User.objects.create_user(username='l1', password='landlordpass1', role=UserRole.LANDLORD)
+        self.other_landlord = User.objects.create_user(username='l2', password='landlordpass2', role=UserRole.LANDLORD)
+        self.my_tenant = User.objects.create_user(username='t_mine', password='tenantpass1', role=UserRole.TENANT)
+        self.other_tenant = User.objects.create_user(username='t_other', password='tenantpass2', role=UserRole.TENANT)
+        self.moved_tenant = User.objects.create_user(username='t_moved', password='tenantpass3', role=UserRole.TENANT)
+        self.staff = User.objects.create_user(username='s1', password='staffpass123', role=UserRole.STAFF)
+        # Liên kết do Tenant Service trả về cho chủ trọ l1 (đã lọc theo landlord_id ở Tenant Service).
+        self.links = [
+            tenant_link(10, self.my_tenant.id, room_id=1, landlord_id=self.landlord.id),
+            tenant_link(11, self.moved_tenant.id, room_id=2, landlord_id=self.landlord.id, status='MOVED_OUT'),
+            # user_id trỏ tới LANDLORD khác: không bao giờ được coi là TENANT trong phạm vi.
+            tenant_link(12, self.other_landlord.id, room_id=3, landlord_id=self.landlord.id),
+        ]
+
+    def bearer(self, user):
+        client = APIClient()
+        token = CustomTokenObtainPairSerializer.get_token(user).access_token
+        client.credentials(HTTP_AUTHORIZATION=f'Bearer {token}')
+        return client
+
+    def test_landlord_lists_only_own_tenants_and_self(self):
+        with mock.patch('common.service_client.requests.get',
+                        return_value=fake_http_response(200, self.links)) as fake:
+            res = self.bearer(self.landlord).get('/api/users/')
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(sorted(u['username'] for u in res.data), ['l1', 't_mine'])
+        # Gọi đúng Tenant Service bằng JWT của chính chủ trọ (không dùng ID từ client).
+        self.assertEqual(fake.call_args.args[0], 'http://127.0.0.1:8003/api/tenants/links/')
+        self.assertTrue(fake.call_args.kwargs['headers']['Authorization'].startswith('Bearer '))
+
+    def test_landlord_cannot_read_or_edit_tenant_out_of_scope(self):
+        with mock.patch('common.service_client.requests.get', return_value=fake_http_response(200, self.links)):
+            client = self.bearer(self.landlord)
+            for user in (self.other_tenant, self.moved_tenant, self.other_landlord, self.admin, self.staff):
+                self.assertEqual(client.get(f'/api/users/{user.id}/').status_code, status.HTTP_404_NOT_FOUND)
+                res = client.patch(f'/api/users/{user.id}/', {'first_name': 'Hack'}, format='json')
+                self.assertEqual(res.status_code, status.HTTP_404_NOT_FOUND)
+            res = client.patch(f'/api/users/{self.my_tenant.id}/', {'phone_number': '0911'}, format='json')
+            self.assertEqual(res.status_code, status.HTTP_200_OK, res.data)
+        self.other_tenant.refresh_from_db()
+        self.assertEqual(self.other_tenant.first_name, '')
+
+    def test_tenant_service_down_fails_closed_503(self):
+        with mock.patch('common.service_client.requests.get', side_effect=requests.exceptions.ConnectionError()):
+            res = self.bearer(self.landlord).get('/api/users/')
+        self.assertEqual(res.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+        with mock.patch('common.service_client.requests.get', return_value=fake_http_response(500, None)):
+            res = self.bearer(self.landlord).get(f'/api/users/{self.my_tenant.id}/')
+        self.assertEqual(res.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+
+    def test_admin_sees_whole_system_without_tenant_lookup(self):
+        with mock.patch('common.service_client.requests.get') as fake:
+            res = self.bearer(self.admin).get('/api/users/')
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(res.data), User.objects.count())
+        fake.assert_not_called()
+
+    def test_staff_has_no_admin_or_manager_rights(self):
+        client = self.bearer(self.staff)
+        self.assertEqual(client.get('/api/users/').status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(client.get(f'/api/users/{self.my_tenant.id}/').status_code, status.HTTP_403_FORBIDDEN)
+        res = client.post('/api/users/', {'username': 'x', 'password': 'abcdef12', 'role': 'ADMIN'}, format='json')
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(client.delete(f'/api/users/{self.my_tenant.id}/').status_code, status.HTTP_403_FORBIDDEN)
+        # Không tự nâng quyền qua hồ sơ cá nhân.
+        client.patch('/api/auth/me/', {'role': 'ADMIN', 'is_active': True}, format='json')
+        self.staff.refresh_from_db()
+        self.assertEqual(self.staff.role, UserRole.STAFF)
+
+    def test_staff_role_cannot_be_newly_assigned(self):
+        client = self.bearer(self.admin)
+        res = client.post('/api/users/', {'username': 'new_s', 'password': 'abcdef12', 'role': 'STAFF'}, format='json')
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        res = client.patch(f'/api/users/{self.my_tenant.id}/', {'role': 'STAFF'}, format='json')
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        # Dữ liệu STAFF cũ vẫn giữ nguyên; ADMIN chuyển được STAFF sang vai trò chính thức.
+        res = client.patch(f'/api/users/{self.staff.id}/', {'role': 'LANDLORD'}, format='json')
+        self.assertEqual(res.status_code, status.HTTP_200_OK, res.data)
+
+    def test_unauthenticated_401(self):
+        self.assertEqual(APIClient().get('/api/users/').status_code, status.HTTP_401_UNAUTHORIZED)
