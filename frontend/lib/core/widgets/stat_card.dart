@@ -98,7 +98,12 @@ class _StatCardState extends State<StatCard> {
                 ],
               ),
               const SizedBox(height: 8),
-              Text(widget.value, style: AppTypography.statValue),
+              // Giá trị dài (vd. tiền tệ) thu nhỏ vừa thẻ thay vì xuống dòng và tràn chiều cao cố định.
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Text(widget.value, style: AppTypography.statValue, maxLines: 1),
+              ),
               if (widget.subtitle != null) ...[
                 const SizedBox(height: 2),
                 Text(

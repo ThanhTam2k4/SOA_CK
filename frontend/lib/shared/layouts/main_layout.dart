@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import '../../core/auth/role_access.dart';
+import '../../core/constants/api_constants.dart';
 import '../../core/constants/app_colors.dart';
 import '../../core/constants/app_spacing.dart';
 import '../../core/utils/responsive.dart';
@@ -74,7 +75,7 @@ class MainLayout extends StatelessWidget {
                     await repo.syncWithBackend();
                     if (context.mounted) {
                       if (repo.isBackendConnected) {
-                        showSuccessToast(context, 'Đã đồng bộ dữ liệu qua API Gateway (:8000)');
+                        showSuccessToast(context, 'Đã đồng bộ dữ liệu qua API Gateway (${ApiConstants.gatewayLabel})');
                       } else {
                         showErrorToast(
                           context,
@@ -185,30 +186,41 @@ class _MobileBottomNav extends StatelessWidget {
 
   const _MobileBottomNav({required this.currentLocation, required this.role});
 
-  static const _all = [
-    _MobileNavItem('/dashboard', 'Tổng quan', Icons.bar_chart_rounded, Icons.bar_chart_rounded),
-    _MobileNavItem('/property', 'Tòa nhà', Icons.apartment_rounded, Icons.apartment_rounded),
-    _MobileNavItem('/rooms', 'Phòng trọ', Icons.door_front_door_outlined, Icons.door_front_door_rounded),
-    _MobileNavItem(
-      '/notifications',
-      'Thông báo',
-      Icons.notifications_none_rounded,
-      Icons.notifications_rounded,
-    ),
-    _MobileNavItem('/settings', 'Cài đặt', Icons.settings_outlined, Icons.settings_rounded),
-  ];
+  static const _settings =
+      _MobileNavItem('/settings', 'Cài đặt', Icons.settings_outlined, Icons.settings_rounded);
+  static const _notifications = _MobileNavItem(
+    '/notifications',
+    'Thông báo',
+    Icons.notifications_none_rounded,
+    Icons.notifications_rounded,
+  );
 
-  /// Quản lý: Tổng quan / Tòa nhà / Phòng trọ / Cài đặt (như trước).
-  /// TENANT: chỉ các trang được phép (Thông báo / Cài đặt).
+  /// Thanh dưới (mobile) tối đa 5 mục; các mục còn lại nằm trong Drawer (sidebar).
+  /// Quản lý: Tổng quan / Nhà trọ / Phòng / Khách thuê / Cài đặt.
+  /// TENANT: Tổng quan / Phòng đang thuê / Hóa đơn của tôi / Thông báo / Cài đặt.
   List<_MobileNavItem> get _items => RoleAccess.isManager(role)
-      ? _all.where((i) => i.route != '/notifications').toList()
-      : _all.where((i) => RoleAccess.canAccess(role, i.route)).toList();
+      ? const [
+          _MobileNavItem('/', 'Tổng quan', Icons.bar_chart_rounded, Icons.bar_chart_rounded),
+          _MobileNavItem('/properties', 'Nhà trọ', Icons.apartment_rounded, Icons.apartment_rounded),
+          _MobileNavItem('/rooms', 'Phòng', Icons.door_front_door_outlined, Icons.door_front_door_rounded),
+          _MobileNavItem('/tenants', 'Khách thuê', Icons.people_outline_rounded, Icons.people_rounded),
+          _settings,
+        ]
+      : const [
+          _MobileNavItem('/', 'Tổng quan', Icons.dashboard_outlined, Icons.dashboard_rounded),
+          _MobileNavItem('/my-room', 'Phòng', Icons.door_front_door_outlined, Icons.door_front_door_rounded),
+          _MobileNavItem('/my-bills', 'Hóa đơn', Icons.payments_outlined, Icons.payments_rounded),
+          _notifications,
+          _settings,
+        ];
 
   @override
   Widget build(BuildContext context) {
     final items = _items;
     final found = items.indexWhere(
-      (i) => currentLocation == i.route || currentLocation.startsWith('${i.route}/'),
+      (i) => i.route == '/'
+          ? currentLocation == '/'
+          : currentLocation == i.route || currentLocation.startsWith('${i.route}/'),
     );
     final selectedIndex = found < 0 ? 0 : found;
 

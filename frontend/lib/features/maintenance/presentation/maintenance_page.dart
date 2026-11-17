@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../../../core/config/sprint_features.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
 import '../../../core/theme/app_typography.dart';
@@ -463,10 +464,12 @@ class _MaintenancePageState extends State<MaintenancePage> {
           title: 'Bảo trì & sửa chữa',
           subtitle: 'Tiếp nhận sự cố kỹ thuật, phân công sửa chữa và kiểm soát chi phí bảo trì phòng.',
           actions: [
-            AppButton(
-              label: '+ Tạo yêu cầu bảo trì',
-              onPressed: () => _openMaintenanceForm(),
-            ),
+            // Mọi API ghi của bảo trì đang tạm khóa ở backend (Sprint sau) -> ẩn nút, giữ source.
+            if (SprintFeatures.maintenanceWrite)
+              AppButton(
+                label: '+ Tạo yêu cầu bảo trì',
+                onPressed: () => _openMaintenanceForm(),
+              ),
           ],
         ),
 
@@ -532,8 +535,8 @@ class _MaintenancePageState extends State<MaintenancePage> {
             icon: Icons.build_outlined,
             title: 'Chưa có yêu cầu bảo trì nào',
             subtitle: 'Các yêu cầu sửa chữa được tạo sẽ hiển thị tại đây.',
-            actionLabel: '+ Tạo yêu cầu bảo trì',
-            onAction: () => _openMaintenanceForm(),
+            actionLabel: SprintFeatures.maintenanceWrite ? '+ Tạo yêu cầu bảo trì' : null,
+            onAction: SprintFeatures.maintenanceWrite ? () => _openMaintenanceForm() : null,
           ),
           noMatch: filtered.isNotEmpty
               ? null
@@ -615,6 +618,7 @@ class _MaintenancePageState extends State<MaintenancePage> {
                       width: 145,
                       cellBuilder: (m) => StatusBadge.fromMaintenanceStatus(m.status),
                     ),
+                    if (SprintFeatures.maintenanceWrite)
                     AppTableColumn(
                       label: 'THAO TÁC',
                       width: 205,

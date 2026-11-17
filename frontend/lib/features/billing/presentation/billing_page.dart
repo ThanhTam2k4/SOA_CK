@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../../../core/config/sprint_features.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
 import '../../../core/theme/app_typography.dart';
@@ -437,6 +438,20 @@ class _BillingPageState extends State<BillingPage> {
     final paged = filtered.sublist(start, end);
     final hasFilter = query.isNotEmpty || _monthFilter != 'ALL' || _statusFilter != 'ALL';
 
+    // Bộ lọc tháng lấy từ kỳ thu THẬT của các hóa đơn đã tải (mới nhất trước), không cố định.
+    final months = <String, (int, int)>{
+      for (final i in repo.invoices)
+        if (i.billingMonth.isNotEmpty) i.billingMonth: (i.year, i.month),
+    };
+    final monthKeys = months.keys.toList()
+      ..sort((a, b) {
+        final (ya, ma) = months[a]!;
+        final (yb, mb) = months[b]!;
+        return ya != yb ? yb.compareTo(ya) : mb.compareTo(ma);
+      });
+    // Tháng đang chọn không còn trong dữ liệu (vd. sau khi tải lại) -> vẫn giữ để không lỗi lựa chọn.
+    if (_monthFilter != 'ALL' && !months.containsKey(_monthFilter)) monthKeys.insert(0, _monthFilter);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -444,10 +459,12 @@ class _BillingPageState extends State<BillingPage> {
           title: 'Hóa đơn',
           subtitle: 'Quản lý hóa đơn tiền thuê phòng, điện, nước và theo dõi công nợ hàng tháng.',
           actions: [
-            AppButton(
-              label: '+ Lập hóa đơn',
-              onPressed: () => _openInvoiceForm(),
-            ),
+            // Lập hóa đơn đang tạm khóa ở backend (Sprint hiện tại) -> ẩn nút, giữ source.
+            if (SprintFeatures.invoiceWrite)
+              AppButton(
+                label: '+ Lập hóa đơn',
+                onPressed: () => _openInvoiceForm(),
+              ),
           ],
         ),
 
@@ -467,10 +484,9 @@ class _BillingPageState extends State<BillingPage> {
                 label: 'Tháng',
                 width: 165,
                 value: _monthFilter,
-                options: const [
-                  AppSelectOption(value: 'ALL', label: 'Tất cả các tháng'),
-                  AppSelectOption(value: '11/2026', label: 'Tháng 11/2026'),
-                  AppSelectOption(value: '10/2026', label: 'Tháng 10/2026'),
+                options: [
+                  const AppSelectOption(value: 'ALL', label: 'Tất cả các tháng'),
+                  for (final m in monthKeys) AppSelectOption(value: m, label: 'Tháng $m'),
                 ],
                 onChanged: (v) => setState(() {
                   _monthFilter = v ?? 'ALL';
@@ -512,8 +528,8 @@ class _BillingPageState extends State<BillingPage> {
             icon: Icons.receipt_long_outlined,
             title: 'Chưa có hóa đơn nào',
             subtitle: 'Hệ thống chưa có hóa đơn nào trong phạm vi quản lý của bạn.',
-            actionLabel: '+ Lập hóa đơn',
-            onAction: () => _openInvoiceForm(),
+            actionLabel: SprintFeatures.invoiceWrite ? '+ Lập hóa đơn' : null,
+            onAction: SprintFeatures.invoiceWrite ? () => _openInvoiceForm() : null,
           ),
           noMatch: filtered.isNotEmpty
               ? null
@@ -588,6 +604,7 @@ class _BillingPageState extends State<BillingPage> {
                       width: 150,
                       cellBuilder: (i) => StatusBadge.fromInvoiceStatus(i.status),
                     ),
+                    if (SprintFeatures.invoiceWrite)
                     AppTableColumn(
                       label: 'THAO TÁC',
                       width: 170,

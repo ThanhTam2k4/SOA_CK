@@ -62,7 +62,7 @@ class AppTableColumn<T> {
   });
 }
 
-class AppTable<T> extends StatelessWidget {
+class AppTable<T> extends StatefulWidget {
   final List<AppTableColumn<T>> columns;
   final List<T> items;
   final void Function(T item)? onRowTap;
@@ -77,12 +77,36 @@ class AppTable<T> extends StatelessWidget {
   });
 
   @override
+  State<AppTable<T>> createState() => _AppTableState<T>();
+}
+
+/// Bảng rộng hơn màn hình (tablet / mobile / cửa sổ hẹp): cuộn ngang và LUÔN hiện thanh cuộn,
+/// để người dùng thấy còn cột bên phải thay vì tưởng nội dung bị cắt.
+class _AppTableState<T> extends State<AppTable<T>> {
+  /// Bề rộng tối thiểu cho mỗi đơn vị `flex`. 80px giúp các bảng nhiều cột (vd. Người thuê: 7 cột)
+  /// vừa màn hình desktop 1440px (vùng nội dung ~1116px) mà không phải cuộn ngang để thấy cột THAO TÁC.
+  static const double _minFlexUnit = 80;
+
+  final ScrollController _hScroll = ScrollController();
+
+  List<AppTableColumn<T>> get columns => widget.columns;
+  List<T> get items => widget.items;
+  void Function(T item)? get onRowTap => widget.onRowTap;
+  double get minWidth => widget.minWidth;
+
+  @override
+  void dispose() {
+    _hScroll.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
         final colsMinWidth = columns.fold<double>(
           40.0,
-          (sum, col) => sum + (col.width ?? col.flex * 110.0),
+          (sum, col) => sum + (col.width ?? col.flex * _minFlexUnit),
         );
         final targetMinWidth =
             colsMinWidth > minWidth ? colsMinWidth : minWidth;
@@ -90,8 +114,12 @@ class AppTable<T> extends StatelessWidget {
             ? targetMinWidth
             : constraints.maxWidth;
 
-        return SingleChildScrollView(
+        final overflows = effectiveWidth > constraints.maxWidth;
+
+        final table = SingleChildScrollView(
+          controller: _hScroll,
           scrollDirection: Axis.horizontal,
+          padding: EdgeInsets.only(bottom: overflows ? 10 : 0),
           child: SizedBox(
             width: effectiveWidth,
             child: Column(
@@ -122,6 +150,14 @@ class AppTable<T> extends StatelessWidget {
               ],
             ),
           ),
+        );
+        if (!overflows) return table;
+        return Scrollbar(
+          key: const Key('app_table_hscrollbar'),
+          controller: _hScroll,
+          thumbVisibility: true,
+          trackVisibility: true,
+          child: table,
         );
       },
     );

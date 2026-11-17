@@ -204,9 +204,13 @@ class _BannerPill extends StatelessWidget {
         children: [
           Icon(icon, size: 15, color: AppColors.surface),
           const SizedBox(width: AppSpacing.labelGap),
-          Text(
-            label,
-            style: AppTypography.labelSm.copyWith(color: AppColors.surface),
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: AppTypography.labelSm.copyWith(color: AppColors.surface),
+            ),
           ),
         ],
       ),

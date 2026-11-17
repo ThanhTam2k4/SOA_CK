@@ -11,6 +11,9 @@ class AppTextField extends StatelessWidget {
   final int maxLines;
   final String? Function(String?)? validator;
 
+  /// Ẩn ký tự nhập (mật khẩu).
+  final bool obscureText;
+
   const AppTextField({
     super.key,
     required this.label,
@@ -20,6 +23,7 @@ class AppTextField extends StatelessWidget {
     this.isNumber = false,
     this.maxLines = 1,
     this.validator,
+    this.obscureText = false,
   });
 
   @override
@@ -51,7 +55,8 @@ class AppTextField extends StatelessWidget {
         const SizedBox(height: 6),
         TextFormField(
           controller: controller,
-          maxLines: maxLines,
+          maxLines: obscureText ? 1 : maxLines,
+          obscureText: obscureText,
           style: AppTypography.body,
           keyboardType: isNumber ? TextInputType.number : TextInputType.text,
           decoration: InputDecoration(hintText: hint),

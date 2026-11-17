@@ -50,7 +50,7 @@ class SoaServices {
     shortName: 'Property',
     port: 8002,
     database: 'nhatro_property_db',
-    route: '/property',
+    route: '/properties',
     gatewayPrefix: 'properties',
     icon: Icons.apartment_outlined,
   );
@@ -61,7 +61,7 @@ class SoaServices {
     shortName: 'Tenant',
     port: 8003,
     database: 'nhatro_tenant_db',
-    route: '/tenant',
+    route: '/tenants',
     gatewayPrefix: 'tenants',
     icon: Icons.people_outline_rounded,
   );
@@ -72,7 +72,7 @@ class SoaServices {
     shortName: 'Contract',
     port: 8004,
     database: 'nhatro_contract_db',
-    route: '/contract',
+    route: '/contracts',
     gatewayPrefix: 'contracts',
     icon: Icons.description_outlined,
   );
@@ -83,7 +83,7 @@ class SoaServices {
     shortName: 'Billing',
     port: 8005,
     database: 'nhatro_billing_db',
-    route: '/billing',
+    route: '/bills',
     gatewayPrefix: 'billing/invoices',
     icon: Icons.receipt_long_outlined,
   );
@@ -97,16 +97,13 @@ class SoaServices {
   ];
 
   static SoaServiceConfig forRoute(String location) {
-    if (location.startsWith('/property') ||
-        location.startsWith('/rooms') ||
-        location.startsWith('/maintenance')) {
+    bool under(String r) => location == r || location.startsWith('$r/');
+    if (under('/properties') || under('/rooms') || under('/my-room') || under('/maintenance')) {
       return property;
     }
-    if (location.startsWith('/tenant')) return tenant;
-    if (location.startsWith('/contract')) return contract;
-    if (location.startsWith('/billing') || location.startsWith('/notifications')) {
-      return billing;
-    }
+    if (under('/tenants') || under('/my-profile')) return tenant;
+    if (under('/contracts') || under('/my-contracts')) return contract;
+    if (under('/bills') || under('/my-bills') || under('/notifications')) return billing;
     return identity;
   }
 }

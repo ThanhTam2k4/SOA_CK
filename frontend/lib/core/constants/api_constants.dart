@@ -14,6 +14,16 @@ class ApiConstants {
 
   static const String baseUrl = '$gatewayUrl/api';
 
+  /// Nhãn địa chỉ Gateway để hiển thị (":8000" khi chạy local, "host[:port]" khi hosting) —
+  /// lấy từ API_GATEWAY_URL, không hard-code cổng.
+  static String get gatewayLabel {
+    final uri = Uri.tryParse(gatewayUrl);
+    if (uri == null || uri.host.isEmpty) return gatewayUrl;
+    final port = uri.hasPort ? ':${uri.port}' : '';
+    final isLocal = uri.host == '127.0.0.1' || uri.host == 'localhost' || uri.host == '10.0.2.2';
+    return isLocal && port.isNotEmpty ? port : '${uri.host}$port';
+  }
+
   // GATEWAY — endpoint do chính Gateway xử lý / tổng hợp
   static const String systemHealth = '$baseUrl/system/health/';
   static const String dashboardSummary = '$baseUrl/dashboard/summary/';

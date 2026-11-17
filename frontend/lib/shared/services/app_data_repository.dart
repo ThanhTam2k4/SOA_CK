@@ -234,9 +234,10 @@ class AppDataRepository extends ChangeNotifier {
   }
 
   /// Thông tin kết nối + endpoint thực tế của 1 service (Gateway đọc OpenAPI `/api/schema/`
-  /// của chính service đó). Ném [ApiException] khi Gateway không phản hồi.
+  /// của chính service đó). Chỉ ADMIN: gửi kèm JWT, Gateway trả 401 (chưa đăng nhập) / 403 (không phải ADMIN).
+  /// Ném [ApiException] khi Gateway lỗi hoặc không có quyền.
   Future<ServiceEndpointCatalog> fetchServiceEndpoints(String key) async {
-    final res = await ApiClient.get(ApiConstants.serviceEndpoints(key), requireAuth: false);
+    final res = await ApiClient.get(ApiConstants.serviceEndpoints(key));
     if (res is Map<String, dynamic>) return ServiceEndpointCatalog.fromJson(res);
     throw ApiException('Phản hồi không hợp lệ từ API Gateway.');
   }
@@ -572,6 +573,8 @@ class AppDataRepository extends ChangeNotifier {
     return TenantItem(
       id: _int(t['id']),
       roomId: rid,
+      userId: _intOrNull(t['user_id']),
+      landlordId: _intOrNull(t['landlord_id']),
       fullName: '${t['full_name'] ?? ''}',
       phone: '${t['phone_number'] ?? ''}',
       email: '${t['email'] ?? ''}',
@@ -789,6 +792,8 @@ class AppDataRepository extends ChangeNotifier {
       'status': item.status,
       'notes': item.notes,
       'room_id': ?rid,
+      // Liên kết tài khoản đăng nhập TENANT (Identity). Chỉ gửi khi có — không tự gỡ liên kết cũ.
+      'user_id': ?item.userId,
     };
   }
 

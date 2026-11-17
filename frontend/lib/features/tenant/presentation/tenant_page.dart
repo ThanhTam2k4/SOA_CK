@@ -13,6 +13,7 @@ import '../../../core/widgets/page_header.dart';
 import '../../../core/widgets/pagination_widget.dart';
 import '../../../core/widgets/state_views.dart';
 import '../../../core/widgets/status_badge.dart';
+import '../../../providers/auth_provider.dart';
 import '../../../shared/models/app_models.dart';
 import '../../../shared/services/app_data_repository.dart';
 
@@ -29,6 +30,25 @@ class _TenantPageState extends State<TenantPage> {
   int _page = 1;
   static const int _pageSize = 6;
 
+  /// Trạng thái hồ sơ người thuê mà Tenant Service hỗ trợ (TenantStatus ở backend).
+  static const _statusOptions = [
+    AppSelectOption(value: 'ACTIVE', label: 'Đang thuê'),
+    AppSelectOption(value: 'INACTIVE', label: 'Chưa thuê / Tạm ngưng'),
+    AppSelectOption(value: 'MOVED_OUT', label: 'Đã chuyển đi'),
+  ];
+
+  /// Tài khoản TENANT đã tạo thành công nhưng chưa gắn được vào hồ sơ (bước tạo hồ sơ lỗi).
+  /// Lần lưu tiếp theo dùng lại tài khoản này thay vì POST tạo tài khoản mới (tránh trùng).
+  ({int id, String username})? _unlinkedAccount;
+
+  /// Tách họ tên theo quy ước Identity Service: full_name = first_name + ' ' + last_name
+  /// (vd. "Trần Thị Mai" -> first_name "Trần Thị", last_name "Mai").
+  static ({String first, String last}) _splitName(String fullName) {
+    final parts = fullName.trim().split(RegExp(r'\s+'));
+    if (parts.length < 2) return (first: fullName.trim(), last: '');
+    return (first: parts.sublist(0, parts.length - 1).join(' '), last: parts.last);
+  }
+
   @override
   void dispose() {
     _searchCtrl.dispose();
@@ -37,6 +57,23 @@ class _TenantPageState extends State<TenantPage> {
 
   void _openTenantForm([TenantItem? existing]) {
     final repo = context.read<AppDataRepository>();
+    final auth = context.read<AuthProvider>();
+    final isAdmin = auth.isAdmin;
+    // ---- Liên kết tài khoản đăng nhập TENANT ----
+    final linkedUserId = existing?.userId; // đã liên kết: chỉ hiển thị, không đổi ở đây
+    // Tài khoản đang gắn với hồ sơ còn hiệu lực khác -> không cho chọn lại.
+    final takenUserIds = {
+      for (final t in repo.tenants)
+        if (t.userId != null && t.status != 'MOVED_OUT' && t.id != existing?.id) t.userId!,
+    };
+    var createdAccount = linkedUserId == null ? _unlinkedAccount : null;
+    var accountMode = createdAccount != null ? 'create' : 'none'; // none | create | existing
+    final usernameCtrl = TextEditingController();
+    final passwordCtrl = TextEditingController();
+    int? selectedUserId;
+    Future<List<Map<String, dynamic>>>? accountsFuture;
+    String? linkMessage;
+    var submitting = false;
     final formKey = GlobalKey<FormState>();
     final nameCtrl = TextEditingController(text: existing?.fullName ?? '');
     final phoneCtrl = TextEditingController(text: existing?.phone ?? '');
@@ -50,6 +87,11 @@ class _TenantPageState extends State<TenantPage> {
     int? selectedRoomId = existing?.roomId ?? (repo.rooms.isNotEmpty ? repo.rooms.first.id : null);
     bool tempReg = existing?.temporaryResidenceRegistered ?? false;
     String status = existing?.status ?? 'ACTIVE';
+    final statusOptions = [
+      ..._statusOptions,
+      // Giá trị lạ từ backend vẫn hiển thị được, không tự đổi trạng thái của hồ sơ.
+      if (!_statusOptions.any((o) => o.value == status)) AppSelectOption(value: status, label: status),
+    ];
 
     showDialog(
       context: context,
@@ -139,11 +181,7 @@ class _TenantPageState extends State<TenantPage> {
                             label: 'Trạng thái',
                             width: null,
                             value: status,
-                            options: const [
-                              AppSelectOption(value: 'ACTIVE', label: 'Đang thuê'),
-                              AppSelectOption(value: 'TEMPORARY_ABSENT', label: 'Tạm vắng'),
-                              AppSelectOption(value: 'MOVED_OUT', label: 'Đã trả phòng'),
-                            ],
+                            options: statusOptions,
                             onChanged: (v) => setModalState(() => status = v ?? 'ACTIVE'),
                           ),
                         ),
@@ -203,6 +241,26 @@ class _TenantPageState extends State<TenantPage> {
                       value: tempReg,
                       onChanged: (v) => setModalState(() => tempReg = v ?? false),
                     ),
+                    const Divider(height: 24),
+                    _TenantAccountSection(
+                      linkedUserId: linkedUserId,
+                      isAdmin: isAdmin,
+                      mode: accountMode,
+                      createdAccount: createdAccount,
+                      usernameCtrl: usernameCtrl,
+                      passwordCtrl: passwordCtrl,
+                      accountsFuture: accountsFuture,
+                      takenUserIds: takenUserIds,
+                      selectedUserId: selectedUserId,
+                      message: linkMessage,
+                      onModeChanged: (m) => setModalState(() {
+                        accountMode = m;
+                        linkMessage = null;
+                        if (m == 'existing') accountsFuture ??= auth.fetchUsers();
+                      }),
+                      onSelectUser: (id) => setModalState(() => selectedUserId = id),
+                      onReloadAccounts: () => setModalState(() => accountsFuture = auth.fetchUsers()),
+                    ),
                   ],
                 ),
               ),
@@ -216,8 +274,47 @@ class _TenantPageState extends State<TenantPage> {
             ),
             AppButton(
               label: existing == null ? 'Thêm người thuê' : 'Lưu thay đổi',
-              onPressed: () async {
+              isLoading: submitting,
+              onPressed: submitting ? null : () async {
                 if (!formKey.currentState!.validate()) return;
+                // 1) Xác định tài khoản cần liên kết. Tạo mới chỉ MỘT lần; không tự gửi lại POST.
+                int? linkUserId = linkedUserId;
+                if (linkedUserId == null && accountMode == 'existing') {
+                  if (selectedUserId == null) {
+                    setModalState(() => linkMessage = 'Chọn tài khoản TENANT cần liên kết.');
+                    return;
+                  }
+                  linkUserId = selectedUserId;
+                }
+                setModalState(() {
+                  submitting = true;
+                  linkMessage = null;
+                });
+                if (linkedUserId == null && accountMode == 'create') {
+                  if (createdAccount == null) {
+                    final names = _splitName(nameCtrl.text);
+                    final res = await auth.createUserReturningId({
+                      'username': usernameCtrl.text.trim(),
+                      'password': passwordCtrl.text,
+                      'role': 'TENANT',
+                      'first_name': names.first,
+                      'last_name': names.last,
+                      'email': emailCtrl.text.trim(),
+                      'phone_number': phoneCtrl.text.trim(),
+                    });
+                    if (!ctx.mounted || !mounted) return;
+                    if (res.error != null) {
+                      setModalState(() {
+                        submitting = false;
+                        linkMessage = 'Chưa tạo được tài khoản đăng nhập: ${res.error}';
+                      });
+                      return;
+                    }
+                    createdAccount = (id: res.id!, username: usernameCtrl.text.trim());
+                    setState(() => _unlinkedAccount = createdAccount);
+                  }
+                  linkUserId = createdAccount!.id;
+                }
                 final matchedRoom = selectedRoomId != null
                     ? repo.rooms.where((r) => r.id == selectedRoomId).firstOrNull
                     : null;
@@ -237,21 +334,39 @@ class _TenantPageState extends State<TenantPage> {
                   emergencyContactName: emergNameCtrl.text.trim(),
                   emergencyContactPhone: emergPhoneCtrl.text.trim(),
                   temporaryResidenceRegistered: tempReg,
+                  userId: linkUserId,
                 );
+                // 2) Tạo / cập nhật hồ sơ người thuê kèm user_id + room_id.
                 final err = existing == null
                     ? await repo.addTenant(item)
                     : await repo.updateTenant(item);
                 if (!ctx.mounted || !mounted) return;
+                final created = createdAccount;
                 if (err != null) {
+                  setModalState(() {
+                    submitting = false;
+                    linkMessage = created != null && linkUserId == created.id
+                        ? 'Tài khoản "${created.username}" (ID #${created.id}) ĐÃ được tạo nhưng chưa lưu được '
+                            'hồ sơ người thuê: $err\nTài khoản vẫn tồn tại và chưa được liên kết. Sửa thông tin rồi '
+                            'bấm lưu lại: hệ thống dùng lại tài khoản này, không tạo tài khoản mới. Nếu lỗi do '
+                            'mất kết nối, hãy tải lại danh sách người thuê để kiểm tra trước khi lưu lại.'
+                        : 'Chưa lưu được hồ sơ người thuê: $err';
+                  });
                   showErrorToast(context, err);
                   return;
+                }
+                if (created != null && linkUserId == created.id) {
+                  setState(() => _unlinkedAccount = null);
                 }
                 Navigator.pop(ctx);
                 showSuccessToast(
                   context,
-                  existing == null
-                      ? 'Đã thêm khách thuê "${nameCtrl.text.trim()}"'
-                      : 'Đã cập nhật "${nameCtrl.text.trim()}"',
+                  [
+                    existing == null
+                        ? 'Đã thêm khách thuê "${nameCtrl.text.trim()}"'
+                        : 'Đã cập nhật "${nameCtrl.text.trim()}"',
+                    if (linkedUserId == null && linkUserId != null) 'và liên kết tài khoản #$linkUserId',
+                  ].join(' '),
                 );
               },
             ),
@@ -407,9 +522,7 @@ class _TenantPageState extends State<TenantPage> {
                 value: _statusFilter,
                 options: const [
                   AppSelectOption(value: 'ALL', label: 'Tất cả trạng thái'),
-                  AppSelectOption(value: 'ACTIVE', label: 'Đang thuê'),
-                  AppSelectOption(value: 'TEMPORARY_ABSENT', label: 'Tạm vắng'),
-                  AppSelectOption(value: 'MOVED_OUT', label: 'Đã trả phòng'),
+                  ..._statusOptions,
                 ],
                 onChanged: (v) => setState(() {
                   _statusFilter = v ?? 'ALL';
@@ -560,3 +673,192 @@ class _TenantPageState extends State<TenantPage> {
   }
 }
 
+
+/// Phần "Tài khoản đăng nhập" trong form hồ sơ người thuê.
+/// - Đã liên kết: chỉ hiển thị mã tài khoản.
+/// - Chưa liên kết: không liên kết / tạo tài khoản TENANT mới (LANDLORD + ADMIN) /
+///   chọn tài khoản TENANT có sẵn chưa liên kết (chỉ ADMIN — LANDLORD không xem được tài khoản chưa liên kết).
+class _TenantAccountSection extends StatelessWidget {
+  final int? linkedUserId;
+  final bool isAdmin;
+  final String mode;
+  final ({int id, String username})? createdAccount;
+  final TextEditingController usernameCtrl;
+  final TextEditingController passwordCtrl;
+  final Future<List<Map<String, dynamic>>>? accountsFuture;
+  final Set<int> takenUserIds;
+  final int? selectedUserId;
+  final String? message;
+  final ValueChanged<String> onModeChanged;
+  final ValueChanged<int?> onSelectUser;
+  final VoidCallback onReloadAccounts;
+
+  const _TenantAccountSection({
+    required this.linkedUserId,
+    required this.isAdmin,
+    required this.mode,
+    required this.createdAccount,
+    required this.usernameCtrl,
+    required this.passwordCtrl,
+    required this.accountsFuture,
+    required this.takenUserIds,
+    required this.selectedUserId,
+    required this.message,
+    required this.onModeChanged,
+    required this.onSelectUser,
+    required this.onReloadAccounts,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final children = <Widget>[
+      const Align(
+        alignment: Alignment.centerLeft,
+        child: Text('Tài khoản đăng nhập (TENANT)', style: AppTypography.bodyBold),
+      ),
+      const SizedBox(height: 8),
+    ];
+    if (linkedUserId != null) {
+      children.add(Align(
+        alignment: Alignment.centerLeft,
+        child: Text(
+          'Hồ sơ đã liên kết tài khoản #$linkedUserId.',
+          key: const Key('tenant_form_account_linked'),
+          style: AppTypography.caption,
+        ),
+      ));
+      return Column(mainAxisSize: MainAxisSize.min, children: children);
+    }
+    final created = createdAccount;
+    children.add(AppSelect<String>(
+      key: const Key('tenant_form_account_mode'),
+      label: 'Liên kết tài khoản',
+      width: null,
+      value: mode,
+      options: [
+        const AppSelectOption(value: 'none', label: 'Không liên kết tài khoản'),
+        AppSelectOption(
+          value: 'create',
+          label: created != null ? 'Dùng tài khoản vừa tạo (${created.username})' : 'Tạo tài khoản đăng nhập mới',
+        ),
+        if (isAdmin) const AppSelectOption(value: 'existing', label: 'Chọn tài khoản TENANT có sẵn'),
+      ],
+      onChanged: (v) => onModeChanged(v ?? 'none'),
+    ));
+    if (mode == 'create') {
+      children.add(const SizedBox(height: 12));
+      if (created != null) {
+        children.add(Align(
+          alignment: Alignment.centerLeft,
+          child: Text(
+            'Tài khoản "${created.username}" (ID #${created.id}) đã được tạo và chưa liên kết. '
+            'Lưu hồ sơ để liên kết tài khoản này (không tạo thêm tài khoản).',
+            key: const Key('tenant_form_account_reuse'),
+            style: AppTypography.caption.copyWith(color: AppColors.warningText),
+          ),
+        ));
+      } else {
+        children.add(Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: AppTextField(
+                key: const Key('tenant_form_username'),
+                label: 'Tên đăng nhập',
+                controller: usernameCtrl,
+                requiredField: true,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: AppTextField(
+                key: const Key('tenant_form_password'),
+                label: 'Mật khẩu',
+                controller: passwordCtrl,
+                requiredField: true,
+                obscureText: true,
+                validator: (v) => (v == null || v.length < 6) ? 'Mật khẩu cần tối thiểu 6 ký tự' : null,
+              ),
+            ),
+          ],
+        ));
+      }
+    } else if (mode == 'existing') {
+      children.add(const SizedBox(height: 12));
+      children.add(FutureBuilder<List<Map<String, dynamic>>>(
+        future: accountsFuture,
+        builder: (context, snap) {
+          if (snap.connectionState != ConnectionState.done) {
+            return const Align(
+              alignment: Alignment.centerLeft,
+              child: Text('Đang tải danh sách tài khoản...', style: AppTypography.caption),
+            );
+          }
+          if (snap.hasError) {
+            return Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Không tải được danh sách tài khoản: ${snap.error}',
+                    style: AppTypography.caption.copyWith(color: AppColors.errorText),
+                  ),
+                ),
+                TextButton(onPressed: onReloadAccounts, child: const Text('Thử lại')),
+              ],
+            );
+          }
+          // Chỉ tài khoản TENANT đang hoạt động, chưa gắn với hồ sơ còn hiệu lực.
+          final candidates = (snap.data ?? const <Map<String, dynamic>>[])
+              .where((u) =>
+                  u['role'] == 'TENANT' &&
+                  u['is_active'] != false &&
+                  int.tryParse('${u['id']}') != null &&
+                  !takenUserIds.contains(int.tryParse('${u['id']}')))
+              .toList();
+          if (candidates.isEmpty) {
+            return const Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Không có tài khoản TENANT nào chưa liên kết.',
+                key: Key('tenant_form_no_accounts'),
+                style: AppTypography.caption,
+              ),
+            );
+          }
+          final ids = {for (final u in candidates) int.parse('${u['id']}')};
+          return AppSelect<int?>(
+            key: const Key('tenant_form_existing_account'),
+            label: 'Tài khoản TENANT',
+            width: null,
+            value: ids.contains(selectedUserId) ? selectedUserId : null,
+            options: [
+              const AppSelectOption<int?>(value: null, label: '— Chọn tài khoản —'),
+              for (final u in candidates)
+                AppSelectOption<int?>(
+                  value: int.parse('${u['id']}'),
+                  label: '${u['username']} — ${u['full_name'] ?? ''} (#${u['id']})',
+                ),
+            ],
+            onChanged: onSelectUser,
+          );
+        },
+      ));
+    }
+    final msg = message;
+    if (msg != null) {
+      children.add(Container(
+        key: const Key('tenant_form_account_message'),
+        width: double.infinity,
+        margin: const EdgeInsets.only(top: 12),
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: AppColors.errorLight,
+          borderRadius: BorderRadius.circular(AppSpacing.inputRadius),
+          border: Border.all(color: AppColors.errorBorder),
+        ),
+        child: Text(msg, style: AppTypography.caption.copyWith(color: AppColors.errorText)),
+      ));
+    }
+    return Column(mainAxisSize: MainAxisSize.min, children: children);
+  }
+}

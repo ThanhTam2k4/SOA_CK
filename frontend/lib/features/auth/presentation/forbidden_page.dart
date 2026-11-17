@@ -21,7 +21,7 @@ class ForbiddenPage extends StatelessWidget {
       icon: Icons.lock_outline_rounded,
       title: 'Không có quyền truy cập',
       subtitle: 'Tài khoản ${auth.roleDisplay} không được phép mở $target. '
-          'Trang này chỉ dành cho Quản trị viên, Nhân viên hoặc Chủ nhà trọ.',
+          '${RoleAccess.audienceFor(attemptedPath ?? '')}',
       actionLabel: 'Về trang chính',
       onAction: () => context.go(RoleAccess.homeFor(auth.role)),
     );

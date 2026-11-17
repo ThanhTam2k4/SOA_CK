@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
+import '../../../core/auth/role_access.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
 import '../../../core/theme/app_typography.dart';
@@ -9,21 +10,32 @@ import '../../../core/utils/responsive.dart';
 import '../../../core/widgets/app_button.dart';
 import '../../../core/widgets/app_table.dart';
 import '../../../core/widgets/page_header.dart';
+import '../../../core/widgets/section_status.dart';
+import '../../../core/widgets/simple_list_row.dart';
 import '../../../core/widgets/stat_card.dart';
 import '../../../core/widgets/state_views.dart';
 import '../../../core/widgets/status_badge.dart';
+import '../../../providers/auth_provider.dart';
 import '../../../shared/models/app_models.dart';
 import '../../../shared/services/app_data_repository.dart';
+import '../../tenant_portal/presentation/tenant_dashboard.dart';
 import '../widgets/service_endpoints_dialog.dart';
 import '../widgets/soa_architecture_card.dart';
 import 'widgets/monthly_revenue_chart.dart';
 import 'widgets/room_ratio_chart.dart';
 
+/// Dashboard theo vai trò (route `/`):
+/// - ADMIN    : tổng quan toàn hệ thống + số tài khoản + trạng thái 5 service / sơ đồ SOA (catalog endpoint).
+/// - LANDLORD : số liệu trong phạm vi nhà trọ của mình + danh sách khách thuê (không có catalog SOA).
+/// - TENANT / vai trò khác: [TenantDashboard] (dữ liệu của chính mình).
 class DashboardPage extends StatelessWidget {
   const DashboardPage({super.key});
 
   @override
   Widget build(BuildContext context) {
+    final auth = context.watch<AuthProvider>();
+    if (!RoleAccess.isManager(auth.role)) return const TenantDashboard();
+    final isAdmin = RoleAccess.isAdmin(auth.role);
     final repo = context.watch<AppDataRepository>();
     final width = MediaQuery.sizeOf(context).width;
     final cols = AppResponsive.statGridCrossAxisCount(width);
@@ -48,13 +60,14 @@ class DashboardPage extends StatelessWidget {
     Future<void> retry() => repo.syncWithBackend();
 
     final stats = [
+      if (isAdmin) const _AccountCountCard(),
       StatCard(
         title: 'Tổng số tòa nhà',
         value: n(s?.totalProperties),
         subtitle: 'Cơ sở đang vận hành',
         icon: Icons.apartment_rounded,
         tone: StatIconTone.primary,
-        onTap: () => context.go('/property'),
+        onTap: () => context.go('/properties'),
       ),
       StatCard(
         title: 'Tổng số phòng',
@@ -88,7 +101,7 @@ class DashboardPage extends StatelessWidget {
             : 'Đang hoạt động',
         icon: Icons.description_outlined,
         tone: StatIconTone.primary,
-        onTap: () => context.go('/contract'),
+        onTap: () => context.go('/contracts'),
       ),
       StatCard(
         title: 'Hóa đơn cần thu',
@@ -100,7 +113,7 @@ class DashboardPage extends StatelessWidget {
         tone: unpaid > 0
             ? StatIconTone.warning
             : StatIconTone.neutral,
-        onTap: () => context.go('/billing'),
+        onTap: () => context.go('/bills'),
       ),
       // Hai chỉ số backend đã cung cấp sẵn — hiển thị nguyên giá trị, không tự tính lại.
       StatCard(
@@ -117,7 +130,7 @@ class DashboardPage extends StatelessWidget {
         subtitle: 'Hóa đơn chưa thu / quá hạn',
         icon: Icons.account_balance_wallet_outlined,
         tone: (live && (s.unpaidAmount ?? 0) > 0) ? StatIconTone.warning : StatIconTone.neutral,
-        onTap: () => context.go('/billing'),
+        onTap: () => context.go('/bills'),
       ),
     ];
 
@@ -128,9 +141,10 @@ class DashboardPage extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         PageHeader(
-          title: 'Tổng quan hệ thống',
-          subtitle:
-              'Theo dõi công suất phòng, dòng tiền và tình hình vận hành nhà trọ.',
+          title: isAdmin ? 'Tổng quan hệ thống' : 'Tổng quan nhà trọ của bạn',
+          subtitle: isAdmin
+              ? 'Toàn bộ tài khoản, nhà trọ, phòng, khách thuê và trạng thái 5 service.'
+              : 'Theo dõi công suất phòng, khách thuê và hóa đơn trong phạm vi nhà trọ của bạn.',
           actions: [
             AppButton(
               label: 'Quản lý phòng',
@@ -141,7 +155,7 @@ class DashboardPage extends StatelessWidget {
             AppButton(
               label: 'Quản lý tòa nhà',
               icon: Icons.apartment_rounded,
-              onPressed: () => context.go('/property'),
+              onPressed: () => context.go('/properties'),
             ),
           ],
         ),
@@ -211,10 +225,15 @@ class DashboardPage extends StatelessWidget {
             final hasRoomStats = live && s.occupiedRooms != null && s.availableRooms != null;
             final Widget ratioChart;
             if (hasRoomStats) {
+              final maintenance = s.maintenanceRooms ?? 0;
+              // Phần còn lại của total_rooms (RESERVED / INACTIVE) — biểu đồ luôn khớp thẻ "Tổng số phòng".
+              final other = ((s.totalRooms ?? 0) - s.occupiedRooms! - s.availableRooms! - maintenance)
+                  .clamp(0, 1 << 30);
               ratioChart = RoomRatioChart(
                 occupied: s.occupiedRooms!,
                 available: s.availableRooms!,
-                maintenance: s.maintenanceRooms ?? 0,
+                maintenance: maintenance,
+                other: other,
               );
             } else if (loadingSummary) {
               ratioChart = const LoadingState(
@@ -278,22 +297,24 @@ class DashboardPage extends StatelessWidget {
 
         const SizedBox(height: AppSpacing.xxl),
 
-        // Trạng thái THỰC TẾ của kiến trúc SOA (Gateway kiểm tra /health/ của 5 service)
-        SoaArchitectureCard(
-          health: repo.systemHealth,
-          isLoading: repo.isSyncing,
-          onRefresh: repo.refreshSystemHealth,
-          onServiceTap: (key, name, port, status) => ServiceEndpointsDialog.show(
-            context,
-            serviceKey: key,
-            name: name,
-            port: port,
-            healthStatus: status,
-            load: repo.fetchServiceEndpoints,
+        // Trạng thái THỰC TẾ của kiến trúc SOA (Gateway kiểm tra /health/ của 5 service).
+        // Sơ đồ SOA + catalog endpoint chỉ dành cho ADMIN (Gateway cũng chỉ trả catalog cho ADMIN).
+        if (isAdmin) ...[
+          SoaArchitectureCard(
+            health: repo.systemHealth,
+            isLoading: repo.isSyncing,
+            onRefresh: repo.refreshSystemHealth,
+            onServiceTap: (key, name, port, status) => ServiceEndpointsDialog.show(
+              context,
+              serviceKey: key,
+              name: name,
+              port: port,
+              healthStatus: status,
+              load: repo.fetchServiceEndpoints,
+            ),
           ),
-        ),
-
-        const SizedBox(height: AppSpacing.xxl),
+          const SizedBox(height: AppSpacing.xxl),
+        ],
 
         // Property Occupancy Overview
         AppSurfaceCard(
@@ -325,13 +346,13 @@ class DashboardPage extends StatelessWidget {
                     label: 'Chi tiết tòa nhà',
                     variant: AppButtonVariant.outlined,
                     compact: true,
-                    onPressed: () => context.go('/property'),
+                    onPressed: () => context.go('/properties'),
                   ),
                 ],
               ),
               const SizedBox(height: AppSpacing.lg),
               const Divider(height: 1),
-              _SectionStatus(
+              SectionStatus(
                 key: const Key('dashboard_properties_status'),
                 state: propertySection,
                 isEmpty: repo.properties.isEmpty,
@@ -344,13 +365,18 @@ class DashboardPage extends StatelessWidget {
               for (var i = 0; i < repo.properties.length; i++) ...[
                 _PropertyOccupancyRow(
                   property: repo.properties[i],
-                  onTap: () => context.go('/property'),
+                  onTap: () => context.go('/properties'),
                 ),
                 if (i < repo.properties.length - 1) const Divider(height: 1),
               ],
             ],
           ),
         ),
+
+        const SizedBox(height: AppSpacing.xxl),
+
+        // Khách thuê trong phạm vi quản lý (ADMIN: toàn hệ thống; LANDLORD: của mình).
+        _TenantOverviewCard(onRetry: canRetry ? retry : null),
 
         const SizedBox(height: AppSpacing.xxl),
 
@@ -386,14 +412,14 @@ class DashboardPage extends StatelessWidget {
                       label: 'Xem tất cả',
                       variant: AppButtonVariant.outlined,
                       compact: true,
-                      onPressed: () => context.go('/billing'),
+                      onPressed: () => context.go('/bills'),
                     ),
                   ],
                 ),
               ),
               const Divider(height: 1),
               // Phân biệt: đang tải / không có hóa đơn (rỗng thật) / lỗi Billing / không có quyền.
-              _SectionStatus(
+              SectionStatus(
                 key: const Key('dashboard_invoices_status'),
                 state: invoiceSection,
                 isEmpty: repo.invoices.isEmpty,
@@ -406,7 +432,7 @@ class DashboardPage extends StatelessWidget {
               if (repo.invoices.isNotEmpty)
               AppTable<InvoiceItem>(
                 items: repo.invoices,
-                onRowTap: (_) => context.go('/billing'),
+                onRowTap: (_) => context.go('/bills'),
                 columns: [
                   AppTableColumn(
                     label: 'MÃ HÓA ĐƠN',
@@ -519,10 +545,15 @@ class _PropertyOccupancyRow extends StatelessWidget {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(
-                      '${property.occupiedRooms}/${property.totalRooms} phòng đang thuê',
-                      style: AppTypography.labelSm,
+                    Flexible(
+                      child: Text(
+                        '${property.occupiedRooms}/${property.totalRooms} phòng đang thuê',
+                        style: AppTypography.labelSm,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
+                    const SizedBox(width: AppSpacing.sm),
                     Text(
                       '$percent%',
                       style: AppTypography.labelSm.copyWith(
@@ -650,71 +681,111 @@ class _DataSourceBanner extends StatelessWidget {
   }
 }
 
-/// Trạng thái một danh sách trên Dashboard theo [SectionState] của repository:
-/// đang tải / rỗng thật / lỗi (kèm thử lại) / không có quyền. Khi danh sách có dữ liệu cũ mà
-/// lần tải mới lỗi thì báo dữ liệu có thể chưa cập nhật. Có dữ liệu bình thường -> không hiển thị gì.
-class _SectionStatus extends StatelessWidget {
-  final SectionState state;
-  final bool isEmpty;
-  final bool syncing;
-  final String what;
-  final String emptyText;
-  final EdgeInsets padding;
-  final VoidCallback? onRetry;
 
-  const _SectionStatus({
-    super.key,
-    required this.state,
-    required this.isEmpty,
-    required this.syncing,
-    required this.what,
-    required this.emptyText,
-    required this.padding,
-    this.onRetry,
-  });
+/// Thẻ "Tài khoản" của ADMIN: đếm từ GET /api/users/ (Identity). Không có số liệu -> "…" / "—".
+class _AccountCountCard extends StatefulWidget {
+  const _AccountCountCard();
+
+  @override
+  State<_AccountCountCard> createState() => _AccountCountCardState();
+}
+
+class _AccountCountCardState extends State<_AccountCountCard> {
+  late Future<List<Map<String, dynamic>>> _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = context.read<AuthProvider>().fetchUsers();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final String text;
-    var isError = false;
-    var loading = false;
-    if (!isEmpty) {
-      if (!state.isError) return const SizedBox.shrink();
-      text = 'Không cập nhật được $what: ${state.message ?? 'lỗi không xác định'}. '
-          'Đang hiển thị dữ liệu của lần tải trước.';
-      isError = true;
-    } else if (state.isForbidden) {
-      text = 'Tài khoản của bạn không có quyền xem $what.';
-    } else if (state.isError) {
-      text = 'Không tải được $what: ${state.message ?? 'lỗi không xác định'}';
-      isError = true;
-    } else if (state.isLoaded) {
-      text = emptyText;
-    } else if (state.isLoading || syncing) {
-      text = 'Đang tải $what...';
-      loading = true;
-    } else {
-      text = 'Chưa tải được $what.';
-    }
-    final style = AppTypography.caption.copyWith(color: isError ? AppColors.errorText : null);
-    return Padding(
-      padding: padding,
-      child: Row(
+    return FutureBuilder<List<Map<String, dynamic>>>(
+      future: _future,
+      builder: (context, snap) {
+        final done = snap.connectionState == ConnectionState.done;
+        final users = snap.data ?? const <Map<String, dynamic>>[];
+        int count(String role) => users.where((u) => u['role'] == role).length;
+        String byRole(String role) => '${count(role)}';
+        // Vai trò khác (vd. STAFF legacy) vẫn được đếm vào tổng -> hiện riêng để các số cộng lại khớp.
+        final others = users.length - count('ADMIN') - count('LANDLORD') - count('TENANT');
+        return StatCard(
+          key: const Key('dashboard_account_count'),
+          title: 'Tài khoản',
+          value: !done ? '…' : (snap.hasError ? '—' : '${users.length}'),
+          subtitle: !done
+              ? 'Đang tải từ Identity Service...'
+              : snap.hasError
+                  ? 'Không tải được danh sách tài khoản'
+                  : 'ADMIN ${byRole('ADMIN')} · Chủ trọ ${byRole('LANDLORD')} · Khách ${byRole('TENANT')}'
+                      '${others > 0 ? ' · Khác $others' : ''}',
+          icon: Icons.manage_accounts_outlined,
+          tone: snap.hasError ? StatIconTone.warning : StatIconTone.primary,
+          onTap: () => context.go(RoleAccess.accounts),
+        );
+      },
+    );
+  }
+}
+
+/// Danh sách khách thuê (tối đa 5) theo phạm vi quyền, kèm trạng thái tải / rỗng / lỗi.
+class _TenantOverviewCard extends StatelessWidget {
+  final VoidCallback? onRetry;
+
+  const _TenantOverviewCard({this.onRetry});
+
+  @override
+  Widget build(BuildContext context) {
+    final repo = context.watch<AppDataRepository>();
+    final active = repo.tenants.where((t) => t.status == 'ACTIVE').length;
+    return AppSurfaceCard(
+      key: const Key('dashboard_tenant_overview'),
+      padding: AppSpacing.cardPadding,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (loading) ...[
-            const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
-            const SizedBox(width: AppSpacing.sm),
-          ],
-          if (isError) ...[
-            const Icon(Icons.error_outline_rounded, size: 16, color: AppColors.error),
-            const SizedBox(width: AppSpacing.sm),
-          ],
-          Expanded(child: Text(text, style: style)),
-          if (isError && onRetry != null)
-            TextButton.icon(
-              onPressed: onRetry,
-              icon: const Icon(Icons.refresh_rounded, size: 18),
-              label: const Text('Thử lại'),
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Khách thuê', style: AppTypography.sectionTitle),
+                    const SizedBox(height: AppSpacing.xxs),
+                    Text(
+                      '${repo.tenants.length} hồ sơ · $active đang thuê',
+                      style: AppTypography.caption,
+                    ),
+                  ],
+                ),
+              ),
+              AppButton(
+                label: 'Quản lý khách thuê',
+                variant: AppButtonVariant.outlined,
+                compact: true,
+                onPressed: () => context.go(RoleAccess.tenants),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.md),
+          const Divider(height: 1),
+          SectionStatus(
+            key: const Key('dashboard_tenants_status'),
+            state: repo.sectionState(DataSection.tenants),
+            isEmpty: repo.tenants.isEmpty,
+            syncing: repo.isSyncing,
+            what: 'danh sách khách thuê',
+            emptyText: 'Chưa có khách thuê nào.',
+            padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg),
+            onRetry: onRetry,
+          ),
+          for (final t in repo.tenants.take(5))
+            SimpleListRow(
+              title: t.fullName,
+              subtitle: [t.currentRoom, t.propertyName, t.phone].where((e) => e.isNotEmpty).join(' · '),
+              trailing: StatusBadge.fromTenantStatus(t.status),
+              onTap: () => context.go(RoleAccess.tenants),
             ),
         ],
       ),

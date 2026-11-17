@@ -131,3 +131,77 @@ class TenantLinksAndOwnershipTests(TestCase):
         self.assertEqual(landlord.get(f'/api/tenants/{self.mine.id}/history/').status_code, status.HTTP_200_OK)
         self.assertEqual(jwt_client(50, 'TENANT').get(f'/api/tenants/{self.mine.id}/history/').status_code,
                          status.HTTP_200_OK)
+
+
+class TenantAccountRoleCheckTests(TestCase):
+    """user_id gắn vào hồ sơ người thuê phải là tài khoản TENANT (xác minh ở Identity Service)."""
+
+    def setUp(self):
+        self.mine = TenantProfile.objects.create(full_name='Của tôi', landlord_id=10, room_id=1, status='ACTIVE')
+
+    def fake_services(self, eligible_ids, identity_status=200):
+        """Property: phòng hợp lệ. Identity: eligible theo danh sách (identity_status khác 200 -> lỗi)."""
+        calls = []
+
+        def fake_get(url, headers=None, timeout=None):
+            calls.append(url)
+            if '/tenant-link-eligibility/' in url:
+                if identity_status != 200:
+                    return fake_http_response(identity_status, None)
+                uid = int(url.rstrip('/').split('/')[-2])
+                return fake_http_response(200, {'user_id': uid, 'eligible': uid in eligible_ids})
+            return fake_http_response(200, {'id': 1})
+        return mock.patch('common.service_client.requests.get', side_effect=fake_get), calls
+
+    def test_tenant_account_can_be_linked(self):
+        patcher, calls = self.fake_services({70})
+        with patcher:
+            res = jwt_client(10, 'LANDLORD').post('/api/tenants/', {'full_name': 'A', 'user_id': 70, 'room_id': 1},
+                                                  format='json')
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED, res.data)
+        self.assertEqual(res.data['user_id'], 70)
+        self.assertIn('http://127.0.0.1:8001/api/users/70/tenant-link-eligibility/', calls)
+
+    def test_admin_landlord_staff_accounts_rejected_on_create_and_update(self):
+        patcher, _ = self.fake_services(set())  # 1=ADMIN, 2=LANDLORD, 3=STAFF -> Identity trả eligible=False
+        with patcher:
+            for client in (jwt_client(10, 'LANDLORD'), jwt_client(1, 'ADMIN')):
+                for uid in (1, 2, 3):
+                    res = client.post('/api/tenants/', {'full_name': 'X', 'user_id': uid, 'room_id': 1}, format='json')
+                    self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST, res.data)
+                    self.assertIn('user_id', res.data)
+                    res = client.patch(f'/api/tenants/{self.mine.id}/', {'user_id': uid}, format='json')
+                    self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST, res.data)
+        self.assertEqual(TenantProfile.objects.count(), 1)
+        self.mine.refresh_from_db()
+        self.assertIsNone(self.mine.user_id)
+
+    def test_identity_down_or_404_fails_closed(self):
+        patcher, _ = self.fake_services(set(), identity_status=500)
+        with patcher:
+            res = jwt_client(10, 'LANDLORD').patch(f'/api/tenants/{self.mine.id}/', {'user_id': 70}, format='json')
+        self.assertEqual(res.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+        patcher, _ = self.fake_services(set(), identity_status=404)
+        with patcher:
+            res = jwt_client(10, 'LANDLORD').patch(f'/api/tenants/{self.mine.id}/', {'user_id': 70}, format='json')
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        with mock.patch('common.service_client.requests.get', side_effect=requests.exceptions.ConnectionError()):
+            res = jwt_client(10, 'LANDLORD').patch(f'/api/tenants/{self.mine.id}/', {'user_id': 70}, format='json')
+        self.assertEqual(res.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+        self.mine.refresh_from_db()
+        self.assertIsNone(self.mine.user_id)
+
+    def test_unchanged_user_id_not_rechecked_and_tenant_cannot_relink(self):
+        self.mine.user_id = 70
+        self.mine.save()
+        with mock.patch('common.service_client.requests.get') as fake:
+            res = jwt_client(10, 'LANDLORD').patch(f'/api/tenants/{self.mine.id}/', {'user_id': 70, 'notes': 'x'},
+                                                   format='json')
+        self.assertEqual(res.status_code, status.HTTP_200_OK, res.data)
+        fake.assert_not_called()
+        # TENANT không tự đổi liên kết tài khoản / hồ sơ của mình.
+        res = jwt_client(70, 'TENANT').patch(f'/api/tenants/{self.mine.id}/', {'user_id': 71}, format='json')
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
+        self.mine.refresh_from_db()
+        self.assertEqual(self.mine.user_id, 70)
+

@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:nhatro_frontend/core/constants/api_constants.dart';
 import 'package:nhatro_frontend/core/constants/soa_services.dart';
+import 'package:nhatro_frontend/core/widgets/app_sidebar.dart';
 import 'package:nhatro_frontend/main.dart';
 import 'package:nhatro_frontend/providers/auth_provider.dart';
 import 'package:nhatro_frontend/shared/services/api_client.dart';
@@ -93,7 +94,7 @@ void main() {
     await tester.tap(find.text('Đăng nhập'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Tổng quan hệ thống'), findsOneWidget);
+    expect(find.text('Tổng quan nhà trọ của bạn'), findsOneWidget); // Dashboard theo vai trò LANDLORD
     expect(find.text('Chủ trọ Test'), findsWidgets);
     expect(repo.syncCalls, 1);
     // Chưa kết nối Gateway -> báo chưa có số liệu, không hiển thị dữ liệu mẫu thay thế.
@@ -285,25 +286,27 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
+    // Menu LANDLORD (Giai đoạn 3): Bảo trì đã ẩn; tài khoản / quản trị hệ thống chỉ có ở ADMIN.
     final navLabels = [
-      ('Quản lý nhà trọ', 'Quản lý Tòa nhà'),
-      ('Quản lý phòng', 'Quản lý phòng'),
-      ('Quản lý người thuê', 'Quản lý người thuê'),
-      ('Quản lý hợp đồng', 'Quản lý hợp đồng'),
+      ('Nhà trọ', 'Quản lý Tòa nhà'),
+      ('Phòng', 'Quản lý phòng'),
+      ('Khách thuê', 'Quản lý người thuê'),
+      ('Hợp đồng', 'Quản lý hợp đồng'),
       ('Hóa đơn', 'Hóa đơn'),
-      ('Bảo trì & sửa chữa', 'Bảo trì & sửa chữa'),
       ('Thông báo', 'Thông báo'),
-      ('Cài đặt', 'Cài đặt hệ thống & Kiến trúc SOA'),
+      ('Cài đặt', 'Cài đặt'),
+      ('Dashboard', 'Tổng quan nhà trọ của bạn'),
     ];
 
+    Finder sidebar(String text) => find.descendant(of: find.byType(AppSidebar), matching: find.text(text));
     for (final (sidebarText, pageTitle) in navLabels) {
-      await tester.tap(find.text(sidebarText).first);
+      await tester.tap(sidebar(sidebarText).first);
       await tester.pumpAndSettle();
       expect(find.text(pageTitle), findsWidgets);
     }
 
     // Kiểm tra điều hướng sang Thêm phòng mới (/rooms/create) và Chi tiết phòng (/rooms/:id)
-    await tester.tap(find.text('Quản lý phòng').first);
+    await tester.tap(sidebar('Phòng').first);
     await tester.pumpAndSettle();
     // Danh sách rỗng nên "+ Thêm phòng" có ở cả header và EmptyState: bấm nút ở header.
     await tester.tap(find.text('+ Thêm phòng').first);

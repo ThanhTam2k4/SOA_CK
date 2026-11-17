@@ -544,7 +544,7 @@ class _RoomPageState extends State<RoomPage> {
                   columns: [
                     AppTableColumn(
                       label: 'MÃ PHÒNG',
-                      width: 115,
+                      width: 110,
                       cellBuilder: (r) => CodeBadge(r.code),
                     ),
                     AppTableColumn(
@@ -577,7 +577,7 @@ class _RoomPageState extends State<RoomPage> {
                     ),
                     AppTableColumn(
                       label: 'GIÁ THUÊ',
-                      width: 140,
+                      width: 130,
                       cellBuilder: (r) => Text(
                         AppFormatters.currency(r.rentPrice),
                         style: AppTypography.bodyBold.copyWith(
@@ -595,7 +595,7 @@ class _RoomPageState extends State<RoomPage> {
                     ),
                     AppTableColumn(
                       label: 'SỨC CHỨA',
-                      width: 130,
+                      width: 120,
                       cellBuilder: (r) => Text(
                         '${r.currentOccupants} / ${r.maxOccupants} người',
                         style: AppTypography.bodyMedium,

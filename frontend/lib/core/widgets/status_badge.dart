@@ -84,8 +84,9 @@ class StatusBadge extends StatelessWidget {
   factory StatusBadge.fromTenantStatus(String status) {
     return switch (status) {
       'ACTIVE' => const StatusBadge(label: 'Đang thuê', type: BadgeType.success),
-      'TEMPORARY_ABSENT' => const StatusBadge(label: 'Tạm vắng', type: BadgeType.warning),
-      _ => const StatusBadge(label: 'Đã trả phòng', type: BadgeType.neutral),
+      'INACTIVE' => const StatusBadge(label: 'Chưa thuê / Tạm ngưng', type: BadgeType.warning),
+      'MOVED_OUT' => const StatusBadge(label: 'Đã chuyển đi', type: BadgeType.neutral),
+      _ => StatusBadge(label: status.isEmpty ? '—' : status, type: BadgeType.neutral),
     };
   }
 

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import '../auth/role_access.dart';
+import '../constants/api_constants.dart';
 import '../constants/app_colors.dart';
 import '../constants/app_spacing.dart';
 import '../constants/soa_services.dart';
@@ -27,25 +29,16 @@ class AppTopBar extends StatelessWidget {
     this.onLogout,
   });
 
-  String _breadcrumbLabel(String path) {
-    if (path.startsWith('/dashboard')) return 'Tổng quan';
-    if (path.startsWith('/property')) return 'Quản lý nhà trọ';
-    if (path.startsWith('/rooms')) return 'Quản lý phòng';
-    if (path.startsWith('/tenant')) return 'Quản lý người thuê';
-    if (path.startsWith('/contract')) return 'Quản lý hợp đồng';
-    if (path.startsWith('/billing')) return 'Hóa đơn';
-    if (path.startsWith('/maintenance')) return 'Bảo trì & sửa chữa';
-    if (path.startsWith('/notifications')) return 'Thông báo';
-    if (path.startsWith('/settings')) return 'Cài đặt hệ thống';
-    return 'Tổng quan';
-  }
+  String _breadcrumbLabel(String path) => RoleAccess.titleFor(path);
 
   @override
   Widget build(BuildContext context) {
     final isMobile = AppResponsive.isMobile(context);
+    // Tablet (768–1199) thiếu chỗ cho nhãn định tuyến + ô tìm kiếm: chỉ hiện trên desktop.
+    final isDesktop = AppResponsive.isDesktop(context);
     final activeService = SoaServices.forRoute(currentLocation);
     // Flutter chỉ gọi Gateway; nhãn cho biết Gateway định tuyến tới service nào.
-    final routeLabel = 'Gateway :8000 → ${activeService.shortName} :${activeService.port}';
+    final routeLabel = 'Gateway ${ApiConstants.gatewayLabel} → ${activeService.shortName} :${activeService.port}';
 
     return Container(
       height: AppSpacing.topBarHeight,
@@ -71,7 +64,7 @@ class AppTopBar extends StatelessWidget {
           Expanded(
             child: Row(
               children: [
-                if (!isMobile) ...[
+                if (isDesktop) ...[
                   const Text('Hệ thống', style: AppTypography.labelSm),
                   const Padding(
                     padding: EdgeInsets.symmetric(horizontal: AppSpacing.sm),
@@ -89,23 +82,27 @@ class AppTopBar extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
-                if (!isMobile) ...[
+                if (isDesktop) ...[
                   const SizedBox(width: AppSpacing.md),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: AppSpacing.sm,
-                      vertical: AppSpacing.xs,
-                    ),
-                    decoration: BoxDecoration(
-                      color: AppColors.background,
-                      borderRadius: BorderRadius.circular(AppSpacing.badgeRadius),
-                      border: Border.all(color: AppColors.border),
-                    ),
-                    child: Text(
-                      routeLabel,
-                      style: AppTypography.captionSm.copyWith(
-                        fontFamily: 'monospace',
-                        fontWeight: FontWeight.w600,
+                  Flexible(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: AppSpacing.sm,
+                        vertical: AppSpacing.xs,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppColors.background,
+                        borderRadius: BorderRadius.circular(AppSpacing.badgeRadius),
+                        border: Border.all(color: AppColors.border),
+                      ),
+                      child: Text(
+                        routeLabel,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppTypography.captionSm.copyWith(
+                          fontFamily: 'monospace',
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
                   ),
@@ -114,8 +111,8 @@ class AppTopBar extends StatelessWidget {
             ),
           ),
 
-          // Quick Search Bar on Topbar (Desktop & Tablet)
-          if (!isMobile) ...[
+          // Quick Search Bar on Topbar (Desktop & Tablet) — chỉ khi vai trò có trang tìm kiếm (quản lý).
+          if (isDesktop && onGlobalSearch != null) ...[
             SizedBox(
               width: 248,
               height: 40,
@@ -289,21 +286,29 @@ class AppTopBar extends StatelessWidget {
                   ),
                   if (!isMobile) ...[
                     const SizedBox(width: AppSpacing.sm),
-                    Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          userName,
-                          style: AppTypography.labelSm.copyWith(
-                            color: AppColors.textPrimary,
+                    // Tên dài không được đẩy tràn thanh trên cùng.
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 160),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            userName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: AppTypography.labelSm.copyWith(
+                              color: AppColors.textPrimary,
+                            ),
                           ),
-                        ),
-                        Text(
-                          userRole,
-                          style: AppTypography.captionSm,
-                        ),
-                      ],
+                          Text(
+                            userRole,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: AppTypography.captionSm,
+                          ),
+                        ],
+                      ),
                     ),
                     const SizedBox(width: AppSpacing.labelGap),
                     const Icon(

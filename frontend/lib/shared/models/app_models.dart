@@ -141,6 +141,12 @@ class RoomItem {
 class TenantItem {
   final int id;
   final int? roomId;
+
+  /// Tài khoản đăng nhập (Identity user id, vai trò TENANT) gắn với hồ sơ; null = chưa liên kết.
+  final int? userId;
+
+  /// Chủ trọ sở hữu hồ sơ (do backend gán từ JWT, chỉ đọc).
+  final int? landlordId;
   final String fullName;
   final String phone;
   final String email;
@@ -148,7 +154,7 @@ class TenantItem {
   final String currentRoom;
   final String propertyName;
   final String startDate;
-  final String status; // ACTIVE, TEMPORARY_ABSENT, MOVED_OUT
+  final String status; // ACTIVE, INACTIVE, MOVED_OUT (Tenant Service)
   final String permanentAddress;
   final String birthDate;
   final String gender;
@@ -161,6 +167,8 @@ class TenantItem {
   const TenantItem({
     required this.id,
     this.roomId,
+    this.userId,
+    this.landlordId,
     required this.fullName,
     required this.phone,
     required this.email,
@@ -181,6 +189,7 @@ class TenantItem {
 
   TenantItem copyWith({
     int? roomId,
+    int? userId,
     String? fullName,
     String? phone,
     String? email,
@@ -201,6 +210,8 @@ class TenantItem {
     return TenantItem(
       id: id,
       roomId: roomId ?? this.roomId,
+      userId: userId ?? this.userId,
+      landlordId: landlordId,
       fullName: fullName ?? this.fullName,
       phone: phone ?? this.phone,
       email: email ?? this.email,

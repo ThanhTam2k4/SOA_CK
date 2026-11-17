@@ -1,4 +1,5 @@
 from rest_framework import generics, viewsets, permissions, status
+from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import TokenError
@@ -117,6 +118,23 @@ class UserViewSet(viewsets.ModelViewSet):
         links = service_client.fetch_tenant_links(service_client.auth_header_from_request(self.request))
         return {int(link['user_id']) for link in links
                 if link.get('user_id') and link.get('status') != service_client.MOVED_OUT_STATUS}
+
+    @action(detail=True, methods=['get'], url_path='tenant-link-eligibility')
+    def tenant_link_eligibility(self, request, pk=None):
+        """
+        Tenant Service gọi (bằng JWT của ADMIN/LANDLORD) trước khi gắn user_id vào hồ sơ người thuê.
+        Chỉ trả về một giá trị boolean — không lộ username/role/thông tin cá nhân của tài khoản ngoài phạm vi.
+        eligible = tài khoản tồn tại, role TENANT, đang hoạt động, không phải superuser.
+        ADMIN / LANDLORD / STAFF (legacy) không bao giờ được liên kết thành hồ sơ người thuê.
+        """
+        try:
+            user_id = int(pk)
+        except (TypeError, ValueError):
+            raise Http404
+        account = User.objects.filter(pk=user_id).first()
+        eligible = bool(account and account.role == UserRole.TENANT and account.is_active
+                        and not account.is_superuser)
+        return Response({'user_id': user_id, 'eligible': eligible})
 
     def get_queryset(self):
         user = self.request.user

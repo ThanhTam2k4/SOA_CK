@@ -4,7 +4,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from common.auth import IsManagerRole, get_user_id, is_admin, is_landlord
-from common.service_client import auth_header_from_user, room_accessible
+from common.service_client import auth_header_from_user, room_accessible, tenant_account_eligible
 from common.sprint import SprintFeatureLock
 from .models import TenantProfile, TenantStatus
 from .serializers import RentalHistorySerializer, TenantProfileSerializer
@@ -64,6 +64,7 @@ class TenantProfileViewSet(viewsets.ModelViewSet):
           LANDLORD chỉ thấy phòng thuộc nhà trọ của mình). Service không phản hồi -> 503 (fail-closed).
         - user_id không được đang gắn với hồ sơ còn hiệu lực của CHỦ TRỌ KHÁC
           (chặn việc "nhận" tài khoản người thuê của người khác để quản lý).
+        - user_id phải là tài khoản TENANT đang hoạt động (hỏi Identity Service; lỗi -> 503).
         """
         data = serializer.validated_data
         instance = serializer.instance
@@ -79,6 +80,10 @@ class TenantProfileViewSet(viewsets.ModelViewSet):
             if conflict.exclude(landlord_id=landlord_id).exists():
                 raise serializers.ValidationError(
                     {'user_id': 'Tài khoản này đang gắn với hồ sơ người thuê của chủ trọ khác.'})
+            # Chỉ tài khoản role TENANT đang hoạt động (xác minh ở Identity Service, không tin client).
+            if not tenant_account_eligible(auth_header_from_user(self.request.user), user_id):
+                raise serializers.ValidationError(
+                    {'user_id': 'Chỉ được liên kết tài khoản có vai trò Khách thuê (TENANT) đang hoạt động.'})
 
     def perform_create(self, serializer):
         landlord_id = get_user_id(self.request.user)

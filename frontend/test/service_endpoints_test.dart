@@ -21,17 +21,20 @@ http.Response _json(Object? body, [int status = 200]) => http.Response.bytes(
       headers: const {'content-type': 'application/json; charset=utf-8'},
     );
 
-class _LandlordAuth extends AuthProvider {
+/// Sơ đồ SOA + catalog endpoint chỉ dành cho ADMIN (Giai đoạn 3).
+class _RoleAuth extends AuthProvider {
+  _RoleAuth([this._role = 'ADMIN']);
+  final String _role;
   @override
   AuthStatus get status => AuthStatus.authenticated;
   @override
   bool get isAuthenticated => true;
   @override
-  String get role => 'LANDLORD';
+  String get role => _role;
   @override
-  String get displayName => 'Chủ trọ Test';
+  String get displayName => 'Test $_role';
   @override
-  String get roleDisplay => 'Chủ nhà trọ';
+  String get roleDisplay => _role;
 }
 
 const _ports = {'identity': 8001, 'property': 8002, 'tenant': 8003, 'contract': 8004, 'billing': 8005};
@@ -59,6 +62,9 @@ Map<String, dynamic> _catalog(String key, List<Map<String, dynamic>> endpoints, 
 class _Gateway {
   final Map<String, FutureOr<http.Response> Function()> overrides = {};
   final List<String> requests = [];
+
+  /// Header Authorization của từng request lấy catalog endpoint.
+  final List<String?> catalogAuth = [];
   Map<String, String> health = {for (final k in _ports.keys) k: 'UP'};
 
   int count(String path) => requests.where((p) => p == path).length;
@@ -66,6 +72,9 @@ class _Gateway {
   MockClient get client => MockClient((req) async {
         final path = req.url.path;
         requests.add(path);
+        if (path.startsWith('/api/system/services/')) {
+          catalogAuth.add(req.headers['Authorization'] ?? req.headers['authorization']);
+        }
         final o = overrides[path];
         if (o != null) return o();
         if (path == '/api/system/health/') {
@@ -123,7 +132,7 @@ void main() {
     ApiClient.resetForTest();
   });
 
-  Future<void> pumpDashboard(WidgetTester tester) async {
+  Future<void> pumpDashboard(WidgetTester tester, {String role = 'ADMIN'}) async {
     tester.view.physicalSize = const Size(1440, 1000);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
@@ -133,7 +142,7 @@ void main() {
       return null;
     });
     addTearDown(() => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, null));
-    await tester.pumpWidget(NhaTroManagerApp(authProvider: _LandlordAuth(), repository: repo));
+    await tester.pumpWidget(NhaTroManagerApp(authProvider: _RoleAuth(role), repository: repo));
     await tester.pumpAndSettle();
     expect(find.byType(DashboardPage), findsOneWidget);
   }
@@ -280,5 +289,27 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('service_endpoints_dialog')), findsNothing);
     }
+  });
+
+  testWidgets('8. Catalog endpoint gửi kèm JWT (Bearer) — Gateway chỉ trả cho ADMIN', (tester) async {
+    await pumpDashboard(tester);
+    await openService(tester, 'tenant');
+    expect(gw.catalogAuth, isNotEmpty);
+    expect(gw.catalogAuth.every((h) => h == 'Bearer access'), isTrue, reason: '${gw.catalogAuth}');
+  });
+
+  testWidgets('9. LANDLORD: không có sơ đồ SOA / catalog endpoint trên Dashboard, không gọi catalog', (tester) async {
+    await pumpDashboard(tester, role: 'LANDLORD');
+    expect(find.byKey(const Key('soa_service_tenant')), findsNothing);
+    expect(gw.requests.where((p) => p.startsWith('/api/system/services/')), isEmpty);
+  });
+
+  testWidgets('10. Gateway trả 403 cho catalog: báo lỗi, không hiển thị endpoint', (tester) async {
+    gw.overrides['/api/system/services/tenant/endpoints/'] =
+        () => _json({'error': 'Chỉ Quản trị viên (ADMIN) được xem danh mục endpoint.'}, 403);
+    await pumpDashboard(tester);
+    await openService(tester, 'tenant');
+    expect(inDialog(find.textContaining('Chỉ Quản trị viên (ADMIN)')), findsWidgets);
+    expect(inDialog(find.text('/api/tenants/')), findsNothing);
   });
 }

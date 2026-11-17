@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:nhatro_frontend/core/widgets/app_sidebar.dart';
 import 'package:nhatro_frontend/main.dart';
 import 'package:nhatro_frontend/models/dashboard_summary_model.dart';
 import 'package:nhatro_frontend/providers/auth_provider.dart';
@@ -398,7 +399,7 @@ void main() {
       await tester.pumpWidget(NhaTroManagerApp(authProvider: _FakeAuth(), repository: repo));
       await tester.pumpAndSettle();
 
-      expect(find.text('Tổng quan hệ thống'), findsOneWidget);
+      expect(find.text('Tổng quan nhà trọ của bạn'), findsOneWidget);
       expect(find.textContaining('Chưa có số liệu tổng quan'), findsOneWidget);
       expect(find.textContaining('Không kết nối được API Gateway'), findsOneWidget);
       // 8 thẻ KPI (6 cũ + "Doanh thu dự kiến / tháng" + "Tổng tiền chưa thanh toán" của Chặng 5).
@@ -442,8 +443,8 @@ void main() {
       await tester.pumpWidget(NhaTroManagerApp(authProvider: _FakeAuth(), repository: repo));
       await tester.pumpAndSettle();
 
-      for (final nav in ['Quản lý nhà trọ', 'Quản lý phòng']) {
-        await tester.tap(find.text(nav).first);
+      for (final nav in ['Nhà trọ', 'Phòng']) {
+        await tester.tap(find.descendant(of: find.byType(AppSidebar), matching: find.text(nav)).first);
         await tester.pumpAndSettle();
         expect(find.text('Không thể tải dữ liệu'), findsOneWidget, reason: nav);
         expect(find.text('Không tìm thấy tòa nhà nào'), findsNothing);

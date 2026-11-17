@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../../../core/config/sprint_features.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
 import '../../../core/theme/app_typography.dart';
@@ -484,10 +485,12 @@ class _ContractPageState extends State<ContractPage> {
           title: 'Quản lý hợp đồng',
           subtitle: 'Quản lý thời hạn hợp đồng, tiền đặt cọc và gia hạn thuê phòng.',
           actions: [
-            AppButton(
-              label: '+ Tạo hợp đồng',
-              onPressed: () => _openContractForm(),
-            ),
+            // Tạo / sửa / xóa / kích hoạt / gia hạn / chấm dứt hợp đồng đang tạm khóa ở backend.
+            if (SprintFeatures.contractWrite)
+              AppButton(
+                label: '+ Tạo hợp đồng',
+                onPressed: () => _openContractForm(),
+              ),
           ],
         ),
 
@@ -540,8 +543,8 @@ class _ContractPageState extends State<ContractPage> {
             icon: Icons.description_outlined,
             title: 'Chưa có hợp đồng nào',
             subtitle: 'Hệ thống chưa có hợp đồng thuê nào trong phạm vi quản lý của bạn.',
-            actionLabel: '+ Tạo hợp đồng',
-            onAction: () => _openContractForm(),
+            actionLabel: SprintFeatures.contractWrite ? '+ Tạo hợp đồng' : null,
+            onAction: SprintFeatures.contractWrite ? () => _openContractForm() : null,
           ),
           noMatch: filtered.isNotEmpty
               ? null
@@ -568,7 +571,7 @@ class _ContractPageState extends State<ContractPage> {
                   columns: [
                     AppTableColumn(
                       label: 'MÃ HỢP ĐỒNG',
-                      width: 145,
+                      width: 130,
                       cellBuilder: (c) => CodeBadge(c.code),
                     ),
                     AppTableColumn(
@@ -604,7 +607,7 @@ class _ContractPageState extends State<ContractPage> {
                     ),
                     AppTableColumn(
                       label: 'TIỀN ĐẶT CỌC',
-                      width: 145,
+                      width: 130,
                       cellBuilder: (c) => Text(
                         AppFormatters.currency(c.depositAmount),
                         style: AppTypography.bodySemiBold,
@@ -612,17 +615,18 @@ class _ContractPageState extends State<ContractPage> {
                     ),
                     AppTableColumn(
                       label: 'TRẠNG THÁI',
-                      width: 150,
+                      width: 140,
                       cellBuilder: (c) => StatusBadge.fromContractStatus(c.status),
                     ),
                     AppTableColumn(
                       label: 'THAO TÁC',
-                      width: 215,
+                      // Khi khóa Sprint chỉ còn nút Lịch sử -> không giữ chỗ cho các nút ghi đang ẩn.
+                      width: SprintFeatures.contractWrite ? 215 : 90,
                       alignment: Alignment.centerRight,
                       cellBuilder: (c) => Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          if (c.status == 'DRAFT')
+                          if (SprintFeatures.contractWrite && c.status == 'DRAFT')
                             IconButton(
                               tooltip: 'Kích hoạt hợp đồng',
                               icon: const Icon(
@@ -632,10 +636,11 @@ class _ContractPageState extends State<ContractPage> {
                               ),
                               onPressed: () => _activateContract(c),
                             ),
-                          if (c.status == 'ACTIVE' ||
-                              c.status == 'EXTENDED' ||
-                              c.status == 'EXPIRING' ||
-                              c.status == 'EXPIRED') ...[
+                          if (SprintFeatures.contractWrite &&
+                              (c.status == 'ACTIVE' ||
+                                  c.status == 'EXTENDED' ||
+                                  c.status == 'EXPIRING' ||
+                                  c.status == 'EXPIRED')) ...[
                             IconButton(
                               tooltip: 'Gia hạn hợp đồng',
                               icon: const Icon(
@@ -664,24 +669,26 @@ class _ContractPageState extends State<ContractPage> {
                             ),
                             onPressed: () => _openContractHistoryDialog(c),
                           ),
-                          IconButton(
-                            tooltip: 'Chỉnh sửa',
-                            icon: const Icon(
-                              Icons.edit_outlined,
-                              size: 18,
-                              color: AppColors.textSecondary,
+                          if (SprintFeatures.contractWrite) ...[
+                            IconButton(
+                              tooltip: 'Chỉnh sửa',
+                              icon: const Icon(
+                                Icons.edit_outlined,
+                                size: 18,
+                                color: AppColors.textSecondary,
+                              ),
+                              onPressed: () => _openContractForm(c),
                             ),
-                            onPressed: () => _openContractForm(c),
-                          ),
-                          IconButton(
-                            tooltip: 'Xóa',
-                            icon: const Icon(
-                              Icons.delete_outline_rounded,
-                              size: 18,
-                              color: AppColors.error,
+                            IconButton(
+                              tooltip: 'Xóa',
+                              icon: const Icon(
+                                Icons.delete_outline_rounded,
+                                size: 18,
+                                color: AppColors.error,
+                              ),
+                              onPressed: () => _confirmDelete(c),
                             ),
-                            onPressed: () => _confirmDelete(c),
-                          ),
+                          ],
                         ],
                       ),
                     ),

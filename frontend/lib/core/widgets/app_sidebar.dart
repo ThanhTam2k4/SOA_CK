@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../auth/role_access.dart';
+import '../constants/api_constants.dart';
 import '../constants/app_colors.dart';
 import '../constants/app_spacing.dart';
 import '../theme/app_typography.dart';
@@ -30,7 +31,7 @@ class AppSidebar extends StatelessWidget {
   final int? servicesTotal;
   final bool gatewayUp;
 
-  /// Vai trò người dùng: chỉ hiện menu vai trò này được mở ([RoleAccess]). null = hiện tất cả.
+  /// Vai trò người dùng: menu theo [RoleAccess.menuFor] (null / không xác định = menu TENANT).
   final String? role;
 
   const AppSidebar({
@@ -48,72 +49,32 @@ class AppSidebar extends StatelessWidget {
       return (AppColors.textMuted, 'Kiến trúc SOA', 'Chưa kiểm tra trạng thái');
     }
     if (!gatewayUp) {
-      return (AppColors.error, 'API Gateway DOWN', 'Không kết nối được :8000');
+      return (AppColors.error, 'API Gateway DOWN', 'Không kết nối được ${ApiConstants.gatewayLabel}');
     }
     final allUp = servicesUp == servicesTotal;
     return (
       allUp ? AppColors.success : AppColors.warning,
       allUp ? 'Kiến trúc SOA Active' : 'Hệ thống suy giảm',
-      'Gateway :8000 · $servicesUp/$servicesTotal service UP',
+      'Gateway ${ApiConstants.gatewayLabel} · $servicesUp/$servicesTotal service UP',
     );
   }
 
-  bool _visible(String route) => role == null || RoleAccess.canAccess(role, route);
-
-  List<SidebarNavItem> get _mainItems => _allMainItems.where((i) => _visible(i.route)).toList();
-
-  List<SidebarNavItem> get _allMainItems => [
-        const SidebarNavItem(
-          label: 'Tổng quan',
-          route: '/dashboard',
-          icon: Icons.bar_chart_rounded,
-        ),
-        const SidebarNavItem(
-          label: 'Quản lý nhà trọ',
-          route: '/property',
-          icon: Icons.apartment_rounded,
-          port: 8002,
-        ),
-        const SidebarNavItem(
-          label: 'Quản lý phòng',
-          route: '/rooms',
-          icon: Icons.door_front_door_outlined,
-          port: 8002,
-        ),
-        const SidebarNavItem(
-          label: 'Quản lý người thuê',
-          route: '/tenant',
-          icon: Icons.people_outline_rounded,
-          port: 8003,
-        ),
-        const SidebarNavItem(
-          label: 'Quản lý hợp đồng',
-          route: '/contract',
-          icon: Icons.description_outlined,
-          port: 8004,
-        ),
-        const SidebarNavItem(
-          label: 'Hóa đơn',
-          route: '/billing',
-          icon: Icons.payments_outlined,
-          port: 8005,
-        ),
-        const SidebarNavItem(
-          label: 'Bảo trì & sửa chữa',
-          route: '/maintenance',
-          icon: Icons.build_outlined,
-          port: 8002,
-        ),
-        SidebarNavItem(
-          label: 'Thông báo',
-          route: '/notifications',
-          icon: Icons.notifications_none_rounded,
-          port: 8005,
-          badgeCount: unreadNotifications > 0 ? unreadNotifications : null,
-        ),
+  /// Menu theo vai trò ([RoleAccess.menuFor]). Bảo trì không có trong menu ở Sprint hiện tại.
+  List<SidebarNavItem> get _mainItems => [
+        for (final m in RoleAccess.menuFor(role))
+          SidebarNavItem(
+            label: m.label,
+            route: m.route,
+            icon: m.icon,
+            port: m.port,
+            badgeCount: m.route == RoleAccess.notifications && unreadNotifications > 0
+                ? unreadNotifications
+                : null,
+          ),
       ];
 
   bool _isActive(String route) {
+    if (route == RoleAccess.home) return currentLocation == RoleAccess.home;
     return currentLocation == route || currentLocation.startsWith('$route/');
   }
 
@@ -203,13 +164,12 @@ class AppSidebar extends StatelessWidget {
                   ),
                   child: Divider(color: AppColors.border, height: 1),
                 ),
-                if (_visible('/settings'))
                 _SidebarTile(
-                  item: const SidebarNavItem(
-                    label: 'Cài đặt',
-                    route: '/settings',
-                    icon: Icons.settings_outlined,
-                    port: 8001,
+                  item: SidebarNavItem(
+                    label: RoleAccess.settingsItem.label,
+                    route: RoleAccess.settingsItem.route,
+                    icon: RoleAccess.settingsItem.icon,
+                    port: RoleAccess.settingsItem.port,
                   ),
                   active: _isActive('/settings'),
                   onTap: () {

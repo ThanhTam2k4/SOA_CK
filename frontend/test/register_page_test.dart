@@ -370,10 +370,10 @@ void main() {
       repository: _OfflineRepo(),
     ));
     await tester.pumpAndSettle();
-    GoRouter.of(tester.element(find.text('Tổng quan hệ thống'))).go('/register');
+    GoRouter.of(tester.element(find.text('Tổng quan nhà trọ của bạn'))).go('/register');
     await tester.pumpAndSettle();
     expect(find.byType(RegisterPage), findsNothing);
-    expect(find.text('Tổng quan hệ thống'), findsOneWidget);
+    expect(find.text('Tổng quan nhà trọ của bạn'), findsOneWidget);
   });
 
   test('Tách Họ và tên theo quy ước first_name/last_name của dữ liệu hiện có', () {

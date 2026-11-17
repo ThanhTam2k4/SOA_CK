@@ -40,7 +40,10 @@ class AuthProvider extends ChangeNotifier {
     };
   }
 
-  bool get isManager => const {'ADMIN', 'STAFF', 'LANDLORD'}.contains(role);
+  /// Vai trò quản lý chính thức (ADMIN, LANDLORD). STAFF legacy không có quyền quản lý trên giao diện.
+  bool get isManager => const {'ADMIN', 'LANDLORD'}.contains(role);
+
+  bool get isAdmin => role == 'ADMIN';
 
   /// Khôi phục phiên đã lưu và xác minh token với Identity Service (/auth/me/).
   Future<void> restoreSession() async {
@@ -182,6 +185,24 @@ class AuthProvider extends ChangeNotifier {
       return e.message;
     } catch (e) {
       return e.toString();
+    }
+  }
+
+  /// Tạo tài khoản và trả về id do Identity Service cấp (để liên kết hồ sơ người thuê).
+  /// Chỉ gọi POST đúng một lần; không tự thử lại để tránh tạo trùng tài khoản.
+  Future<({int? id, String? error})> createUserReturningId(Map<String, dynamic> payload) async {
+    try {
+      final res = await ApiClient.post(ApiConstants.users, payload);
+      final id = res is Map ? int.tryParse('${res['id']}') : null;
+      if (id == null) {
+        return (id: null, error: 'Identity Service không trả về mã tài khoản vừa tạo. '
+            'Kiểm tra lại danh sách tài khoản trước khi thử tạo lại để tránh trùng.');
+      }
+      return (id: id, error: null);
+    } on ApiException catch (e) {
+      return (id: null, error: e.message);
+    } catch (e) {
+      return (id: null, error: e.toString());
     }
   }
 

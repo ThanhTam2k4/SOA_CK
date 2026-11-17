@@ -107,3 +107,21 @@ def room_accessible(auth_header, room_id):
     if resp.status_code in (403, 404):
         return False
     raise DependencyUnavailable(f'{name} không xác minh được phòng #{room_id} (HTTP {resp.status_code}).')
+
+
+def tenant_account_eligible(auth_header, user_id):
+    """
+    Identity Service: tài khoản user_id có được gắn vào hồ sơ người thuê không (role TENANT, đang hoạt động).
+    Gọi bằng JWT của người dùng (ADMIN/LANDLORD). 404 -> False; phản hồi bất thường -> 503 (fail-closed).
+    """
+    resp, name = _get('identity', f'/api/users/{int(user_id)}/tenant-link-eligibility/', auth_header)
+    if resp.status_code == 404:
+        return False
+    if resp.status_code == 200:
+        try:
+            data = resp.json()
+        except ValueError:
+            data = None
+        if isinstance(data, dict) and isinstance(data.get('eligible'), bool):
+            return data['eligible']
+    raise DependencyUnavailable(f'{name} không xác minh được tài khoản #{user_id} (HTTP {resp.status_code}).')

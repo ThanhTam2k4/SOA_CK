@@ -10,10 +10,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:nhatro_frontend/features/maintenance/presentation/maintenance_page.dart';
 import 'package:nhatro_frontend/main.dart';
 import 'package:nhatro_frontend/providers/auth_provider.dart';
 import 'package:nhatro_frontend/shared/services/api_client.dart';
 import 'package:nhatro_frontend/shared/services/app_data_repository.dart';
+import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 http.Response _json(Object? body, [int status = 200]) => http.Response.bytes(
@@ -62,7 +64,7 @@ class _Module {
 final _modules = <_Module>[
   _Module(
     name: 'Tenant',
-    route: '/tenant',
+    route: '/tenants',
     apiPath: '/api/tenants/',
     keyPrefix: 'tenant_list',
     row: (a) => {'id': 1, 'full_name': 'Khách $a', 'phone_number': '090000000$a', 'status': 'ACTIVE'},
@@ -70,7 +72,7 @@ final _modules = <_Module>[
   ),
   _Module(
     name: 'Contract',
-    route: '/contract',
+    route: '/contracts',
     apiPath: '/api/contracts/',
     keyPrefix: 'contract_list',
     row: (a) => {'id': 1, 'contract_number': 'HD-$a', 'status': 'ACTIVE', 'rental_price': 3000000},
@@ -78,7 +80,7 @@ final _modules = <_Module>[
   ),
   _Module(
     name: 'Billing',
-    route: '/billing',
+    route: '/bills',
     apiPath: '/api/billing/invoices/',
     keyPrefix: 'invoice_list',
     row: (a) => {
@@ -173,6 +175,33 @@ void main() {
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
+    if (location == '/maintenance') {
+      // Trang Bảo trì đã ẩn khỏi menu/route ở Sprint hiện tại (RoleAccess chặn mọi vai trò) nhưng
+      // source vẫn giữ cho Sprint sau -> kiểm thử trực tiếp widget để không làm hỏng mã nguồn.
+      final auth = _RoleAuth(role);
+      await tester.pumpWidget(MultiProvider(
+        providers: [
+          ChangeNotifierProvider<AuthProvider>.value(value: auth),
+          ChangeNotifierProvider<AppDataRepository>.value(value: repo),
+        ],
+        child: MaterialApp.router(
+          routerConfig: GoRouter(routes: [
+            GoRoute(
+              path: '/',
+              builder: (_, _) => const Scaffold(body: SingleChildScrollView(child: MaintenancePage())),
+            ),
+          ]),
+        ),
+      ));
+      unawaited(repo.syncWithBackend());
+      if (settle) {
+        await tester.pumpAndSettle();
+      } else {
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      return;
+    }
     await tester.pumpWidget(NhaTroManagerApp(authProvider: _RoleAuth(role), repository: repo));
     if (settle) {
       await tester.pumpAndSettle();
@@ -312,7 +341,7 @@ void main() {
   // ------------------------------------------------------------ bổ sung
   group('Bổ sung', () {
     testWidgets('Rỗng do bộ lọc khác rỗng thật (Tenant)', (tester) async {
-      await openApp(tester, '/tenant');
+      await openApp(tester, '/tenants');
       await tester.enterText(find.byType(TextField).last, 'không-tồn-tại');
       await tester.pumpAndSettle();
       expect(key('tenant_list_no_match'), findsOneWidget);
@@ -321,7 +350,7 @@ void main() {
 
     testWidgets('Form người thuê: Room Service lỗi thì báo rõ, không âm thầm bỏ ô chọn phòng', (tester) async {
       gw.overrides['GET /api/rooms/'] = (_) => _json({'error': 'Room DOWN'}, 503);
-      await openApp(tester, '/tenant');
+      await openApp(tester, '/tenants');
       await tapVisible(tester, find.text('+ Thêm người thuê').first);
 
       expect(key('tenant_form_rooms_status'), findsOneWidget);
@@ -329,7 +358,7 @@ void main() {
     });
 
     testWidgets('Form người thuê: thật sự chưa có phòng thì nói đúng như vậy', (tester) async {
-      await openApp(tester, '/tenant');
+      await openApp(tester, '/tenants');
       await tapVisible(tester, find.text('+ Thêm người thuê').first);
       expect(find.text('Hệ thống chưa có phòng nào để gán.'), findsOneWidget);
     });
@@ -342,7 +371,7 @@ void main() {
           {'id': 1, 'move_in_date': '2026-01-01', 'note': 'Vào ở'},
         ]);
       };
-      await openApp(tester, '/tenant');
+      await openApp(tester, '/tenants');
       await tester.ensureVisible(find.byTooltip('Lịch sử cư trú & Hồ sơ'));
       await tester.pumpAndSettle();
       await tester.tap(find.byTooltip('Lịch sử cư trú & Hồ sơ'));
@@ -360,7 +389,7 @@ void main() {
 
     testWidgets('Lịch sử người thuê: lỗi có Thử lại; 403 báo không có quyền', (tester) async {
       gw.overrides['GET /api/tenants/1/history/'] = (_) => _json({'error': 'Tenant DOWN'}, 503);
-      await openApp(tester, '/tenant');
+      await openApp(tester, '/tenants');
       await tapVisible(tester, find.byTooltip('Lịch sử cư trú & Hồ sơ'));
 
       expect(key('history_error'), findsOneWidget);
@@ -382,7 +411,7 @@ void main() {
           {'id': 1, 'event_type': 'CREATED', 'event_type_display': 'Tạo hợp đồng', 'new_end_date': '2027-01-01'},
         ]);
       };
-      await openApp(tester, '/contract');
+      await openApp(tester, '/contracts');
       await tester.ensureVisible(find.byTooltip('Lịch sử hợp đồng').first);
       await tester.pumpAndSettle();
       await tester.tap(find.byTooltip('Lịch sử hợp đồng').first);
@@ -404,7 +433,7 @@ void main() {
 
     testWidgets('Lịch sử hợp đồng 403: báo không có quyền', (tester) async {
       gw.overrides['GET /api/contracts/1/history/'] = (_) => _json({'detail': 'Không có quyền.'}, 403);
-      await openApp(tester, '/contract');
+      await openApp(tester, '/contracts');
       await tapVisible(tester, find.byTooltip('Lịch sử hợp đồng').first);
       expect(key('history_forbidden'), findsOneWidget);
       expect(key('history_error'), findsNothing);

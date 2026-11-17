@@ -350,3 +350,24 @@ class IdentityRoleScopeTests(TestCase):
 
     def test_unauthenticated_401(self):
         self.assertEqual(APIClient().get('/api/users/').status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_tenant_link_eligibility_only_boolean_for_active_tenant(self):
+        inactive = User.objects.create_user(username='t_off', password='tenantpass4', role=UserRole.TENANT,
+                                            is_active=False)
+        expected = {self.other_tenant.id: True, self.my_tenant.id: True, inactive.id: False,
+                    self.admin.id: False, self.landlord.id: False, self.other_landlord.id: False,
+                    self.staff.id: False, 999999: False}
+        for caller in (self.admin, self.landlord):
+            client = self.bearer(caller)
+            with mock.patch('common.service_client.requests.get') as fake:
+                for uid, ok in expected.items():
+                    res = client.get(f'/api/users/{uid}/tenant-link-eligibility/')
+                    self.assertEqual(res.status_code, status.HTTP_200_OK)
+                    self.assertEqual(res.data, {'user_id': uid, 'eligible': ok})  # không lộ username/role
+            fake.assert_not_called()
+        for caller in (self.my_tenant, self.staff):
+            res = self.bearer(caller).get(f'/api/users/{self.other_tenant.id}/tenant-link-eligibility/')
+            self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
+        res = APIClient().get(f'/api/users/{self.other_tenant.id}/tenant-link-eligibility/')
+        self.assertEqual(res.status_code, status.HTTP_401_UNAUTHORIZED)
+
